@@ -31,7 +31,9 @@ Unified Merchant Product Control - це Google Ads Script для ecommerce-ак�
 
 ## Поточна версія
 
-Перша GitHub-міграція: `v1.0.0`.
+Поточна стабільна документаційна версія: `v1.0.2`.
+
+Перша GitHub-міграція коду: `v1.0.0`.
 
 ## Джерело правди
 
