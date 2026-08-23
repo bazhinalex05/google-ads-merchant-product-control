@@ -17,6 +17,7 @@ Recommended links:
 - Repository: https://github.com/kUspehu/google-ads-merchant-product-control
 - Current script file: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/script.js
 - Raw script for copying: https://raw.githubusercontent.com/kUspehu/google-ads-merchant-product-control/main/script.js
+- Stable v1.0.0 tag: https://github.com/kUspehu/google-ads-merchant-product-control/tree/v1.0.0
 - Installation guide: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/install.md
 - Settings reference: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/settings.md
 - Troubleshooting: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/troubleshooting.md
@@ -26,7 +27,8 @@ Recommended links:
 Use GitHub Releases for stable versions.
 
 - `main` is the current working version.
-- A release/tag like `v1.0.0` is a stable saved version.
+- A tag like `v1.0.0` is a stable saved version.
+- A GitHub Release can be created from a tag when a more user-friendly download page is needed.
 - Notion should link to the current stable release when a client needs a proven version.
 - Use the `main` file only when intentionally taking the newest working code.
 
@@ -62,4 +64,3 @@ For client installations, record which version was installed:
 - installation date
 - client/account
 - notes about custom settings
-
