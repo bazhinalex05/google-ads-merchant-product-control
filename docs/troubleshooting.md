@@ -1,40 +1,39 @@
 # Troubleshooting
 
-## The Script Says `SPREADSHEET_URL` Is Missing
+## Скрипт пише, що `SPREADSHEET_URL` не заповнений
 
-Replace the placeholder at the top of `script.js` with the full Google Sheets URL.
+Замінити placeholder у верхній частині `script.js` на повний URL Google Sheets таблиці.
 
-## Merchant API Returns 0 Products
+## Merchant API повертає 0 товарів
 
-Check:
+Перевірити:
 
 - `merchant_id`
 - `data_source_filter`
 - `feed_label_filter`
 - `language_filter`
-- Merchant Center account access
-- whether products are active in the selected Merchant account
+- доступ до Merchant Center
+- чи є активні товари у вибраному Merchant account
 
-## Advanced API Errors
+## Помилки Advanced API
 
-Enable Advanced APIs in Google Ads Scripts:
+Увімкнути Advanced APIs у Google Ads Scripts:
 
 - Merchant API -> Products
 - Merchant API -> Accounts
 
-## First GCP Registration Takes Time
+## Перша GCP-реєстрація займає час
 
-If automatic GCP developer registration is enabled, the script may wait after registration before continuing.
+Якщо автоматична GCP developer registration увімкнена, скрипт може чекати після реєстрації перед продовженням роботи.
 
-Relevant settings:
+Пов'язані налаштування:
 
 - `auto_register_gcp_project`
 - `developer_email`
 - `wait_after_gcp_registration_seconds`
 
-## Timeout Or Large Account Issues
+## Timeout або проблеми на великих акаунтах
 
-This repository is for the standard Unified Merchant Product Control script.
+Цей репозиторій призначений для стандартного Unified Merchant Product Control.
 
-For very large assortments, use the separate extended version repository when it is migrated.
-
+Для дуже великих асортиментів треба використовувати окрему extended-версію після її міграції в окремий репозиторій.

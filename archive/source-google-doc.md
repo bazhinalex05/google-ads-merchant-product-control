@@ -1,15 +1,14 @@
-# Source Google Doc
+# Старий Google Doc
 
-Initial migration source:
+Початкове джерело міграції:
 
 https://docs.google.com/document/d/1cj4bcSoQgMXD49_m91bMbEeFebW6_bmhs5VPDIzQQvU/edit?tab=t.0
 
-Observed metadata during migration:
+Метадані, зафіксовані під час міграції:
 
-- Title: `Unified Merchant Funnel Product Control - Code.txt`
-- Modified time: `2026-08-19T13:20:01.273Z`
-- Exported as: `script.js`
-- Export size: `189491` bytes
+- Назва: `Unified Merchant Funnel Product Control - Code.txt`
+- Час останньої зміни: `2026-08-19T13:20:01.273Z`
+- Експортовано як: `script.js`
+- Розмір експорту: `189491` bytes
 
-After the migration, GitHub is the source of truth for this script. The Google Doc is retained only as the historical source.
-
+Після міграції джерелом правди для цього скрипта є GitHub. Google Doc залишено тільки як історичне джерело.

@@ -1,38 +1,38 @@
 # Google Ads Merchant Product Control
 
-Unified Merchant Product Control is a Google Ads Script for ecommerce accounts that use Google Merchant Center.
+Unified Merchant Product Control - це Google Ads Script для ecommerce-акаунтів, які працюють із Google Merchant Center.
 
-The script reads Merchant Center products, builds a `product_type` control layer, reads Google Ads product statistics, calculates Funnel Builder segments, manages product quarantine, and writes the `Products` sheet that can be used as a Merchant Center supplemental feed.
+Скрипт читає товари з Merchant Center, будує контрольний шар `product_type`, читає товарну статистику з Google Ads, рахує сегменти Funnel Builder, веде карантин проблемних товарів і записує лист `Products`, який можна використовувати як додатковий фід Merchant Center.
 
-## When To Use
+## Коли використовувати
 
-Use this script for ecommerce clients where the goal is to focus ad spend on stronger products and reduce waste on weak, problematic, or currently blocked product groups.
+Використовувати для ecommerce-клієнтів, де потрібно сфокусувати рекламний бюджет на сильніших товарах і зменшити витрати на слабкі, проблемні або тимчасово заблоковані групи товарів.
 
-Do not use this repository for the extended large-catalog version or for unrelated Merchant export/audit scripts. Those should live in separate repositories.
+Не використовувати цей репозиторій для extended-версії під великі асортименти або для окремих Merchant export/audit скриптів. Такі самостійні скрипти мають жити в окремих репозиторіях.
 
-## Files
+## Файли
 
-- `script.js` - the Google Ads Script code to copy into Google Ads Scripts.
-- `docs/install.md` - installation steps.
-- `docs/settings.md` - core Settings sheet reference.
-- `docs/troubleshooting.md` - common setup and runtime issues.
-- `docs/workflow.md` - versioning and development workflow.
-- `archive/source-google-doc.md` - original Google Doc source used for the first migration.
+- `script.js` - код Google Ads Script, який копіюється в Google Ads Scripts.
+- `docs/install.md` - інструкція встановлення.
+- `docs/settings.md` - довідник основних налаштувань листа `Settings`.
+- `docs/troubleshooting.md` - типові проблеми запуску й налаштування.
+- `docs/workflow.md` - правила версій, доопрацювань і безпечної роботи.
+- `archive/source-google-doc.md` - старий Google Doc, з якого зроблено першу міграцію.
 
-## Quick Start
+## Швидкий старт
 
-1. Open `script.js`.
-2. Copy the full file contents.
-3. Create a new script in Google Ads: `Tools` -> `Bulk actions` -> `Scripts`.
-4. Paste the code.
-5. Replace `SPREADSHEET_URL` with the target Google Sheets URL.
-6. Enable required Advanced APIs.
-7. Run preview, review logs, then authorize and run.
+1. Відкрити `script.js`.
+2. Скопіювати весь вміст файлу.
+3. У Google Ads створити новий скрипт: `Tools` -> `Bulk actions` -> `Scripts`.
+4. Вставити код.
+5. Замінити `SPREADSHEET_URL` на URL робочої Google Sheets таблиці.
+6. Увімкнути потрібні Advanced APIs.
+7. Спочатку запустити preview, перевірити logs, потім авторизувати й запускати робочий run.
 
-## Current Version
+## Поточна версія
 
-Initial GitHub migration: `v1.0.0`.
+Перша GitHub-міграція: `v1.0.0`.
 
-## Source Of Truth
+## Джерело правди
 
-GitHub is the source of truth for this script. Google Docs copies are historical references only and should not be edited as the active code.
+GitHub є джерелом правди для цього скрипта. Google Docs-копії залишаються тільки історичними посиланнями й не мають редагуватися як активний код.

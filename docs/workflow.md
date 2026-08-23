@@ -1,66 +1,72 @@
-# Workflow
+# Робочий процес
 
-This repository stores one standalone Google Ads Script: Unified Merchant Product Control.
+Цей репозиторій зберігає один самостійний Google Ads Script: Unified Merchant Product Control.
 
-## Source Of Truth
+## Мова документації
 
-GitHub is the source of truth.
+Усі інструкції в Notion, README, CHANGELOG, workflow-документи, робочі нотатки й коментарі до Google Ads скриптів для цієї системи пишемо українською.
 
-Google Docs copies are archive/reference material only. Do not continue editing the active script in Google Docs after the GitHub migration.
+Англійську використовувати тільки там, де це назви інтерфейсу, API, змінних, файлів, помилок або прямі технічні терміни, які не треба перекладати.
 
-## What To Link In Notion
+## Джерело правди
 
-Use Notion as navigation and operating instructions, not as the code storage.
+GitHub є джерелом правди.
 
-Recommended links:
+Google Docs-копії є тільки архівом або історичним референсом. Після міграції не продовжувати редагувати активний код у Google Docs.
 
-- Repository: https://github.com/kUspehu/google-ads-merchant-product-control
-- Current script file: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/script.js
-- Raw script for copying: https://raw.githubusercontent.com/kUspehu/google-ads-merchant-product-control/main/script.js
-- Stable v1.0.0 tag: https://github.com/kUspehu/google-ads-merchant-product-control/tree/v1.0.0
-- Installation guide: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/install.md
-- Settings reference: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/settings.md
+## Що лінкувати в Notion
+
+Notion використовуємо як навігацію й робочу інструкцію, а не як місце зберігання коду.
+
+Рекомендовані посилання:
+
+- Репозиторій: https://github.com/kUspehu/google-ads-merchant-product-control
+- Поточний файл скрипта: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/script.js
+- Raw-версія для копіювання: https://raw.githubusercontent.com/kUspehu/google-ads-merchant-product-control/main/script.js
+- Стабільний тег v1.0.0: https://github.com/kUspehu/google-ads-merchant-product-control/tree/v1.0.0
+- Інструкція встановлення: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/install.md
+- Довідник налаштувань: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/settings.md
 - Troubleshooting: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/troubleshooting.md
 
-## How To Use A Stable Version
+## Як використовувати стабільну версію
 
-Use GitHub Releases for stable versions.
+Для стабільних версій використовувати GitHub tags або GitHub Releases.
 
-- `main` is the current working version.
-- A tag like `v1.0.0` is a stable saved version.
-- A GitHub Release can be created from a tag when a more user-friendly download page is needed.
-- Notion should link to the current stable release when a client needs a proven version.
-- Use the `main` file only when intentionally taking the newest working code.
+- `main` - поточна робоча версія.
+- Тег на кшталт `v1.0.0` - стабільна збережена версія.
+- GitHub Release можна створити з тега, якщо потрібна зручніша сторінка для скачування.
+- У Notion для клієнтської установки краще давати посилання на стабільний tag/release.
+- Файл із `main` використовувати тоді, коли свідомо береться найсвіжіший робочий код.
 
-## How To Change The Script
+## Як змінювати скрипт
 
-1. Start from the latest GitHub version.
-2. Make the change locally or through Codex.
-3. Review the diff before publishing.
-4. Commit the change with a clear message.
-5. Push to GitHub.
-6. If the version is confirmed working, create/update a release tag.
-7. Update Notion with the new stable version and short change summary.
+1. Почати з останньої GitHub-версії.
+2. Внести зміну локально або через Codex.
+3. Перед публікацією переглянути diff.
+4. Зробити commit із зрозумілим повідомленням.
+5. Зробити push у GitHub.
+6. Якщо версія підтверджена як робоча, створити або оновити tag/release.
+7. Оновити Notion: стабільна версія, короткий опис зміни, важливі нюанси.
 
-## Safety Rules
+## Предохранители
 
-- Do not overwrite `script.js` from an old Google Doc without comparing against GitHub first.
-- Do not treat Google Docs as the active source after migration.
-- Do not delete historical Google Docs until the GitHub version has been checked and linked in Notion.
-- Do not mix unrelated scripts in this repository.
-- Keep the extended large-catalog version and other standalone scripts in separate repositories.
-- Before edits, check current Git status and latest GitHub state.
-- Every meaningful change must have a commit.
-- Every client-installed stable version should be identifiable by commit or release tag.
+- Не перезаписувати `script.js` зі старого Google Doc без порівняння з GitHub.
+- Не вважати Google Docs активним джерелом після міграції.
+- Не видаляти історичні Google Docs, доки GitHub-версія не перевірена й не прив'язана в Notion.
+- Не змішувати в цьому репозиторії unrelated scripts.
+- Extended-версія для великих асортиментів і інші самостійні скрипти мають жити в окремих репозиторіях.
+- Перед правками перевіряти поточний Git status і актуальний стан GitHub.
+- Кожна змістовна зміна має мати commit.
+- Кожна стабільна клієнтська версія має бути ідентифікована через commit або tag/release.
 
-## Recovery
+## Відновлення
 
-If a new version breaks, use GitHub history to return to the previous working commit or release.
+Якщо нова версія ламається, використовувати GitHub history, щоб повернутися до попереднього робочого commit або tag/release.
 
-For client installations, record which version was installed:
+Для клієнтських установок фіксувати:
 
-- repository
-- release tag or commit SHA
-- installation date
-- client/account
-- notes about custom settings
+- репозиторій
+- tag/release або commit SHA
+- дату встановлення
+- клієнта/account
+- нотатки про індивідуальні налаштування
