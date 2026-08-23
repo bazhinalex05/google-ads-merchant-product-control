@@ -20,13 +20,13 @@ Notion використовуємо як навігацію й робочу ін
 
 Рекомендовані посилання:
 
-- Репозиторій: https://github.com/kUspehu/google-ads-merchant-product-control
-- Поточний файл скрипта: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/script.js
-- Raw-версія для копіювання: https://raw.githubusercontent.com/kUspehu/google-ads-merchant-product-control/main/script.js
-- Стабільний тег v1.0.2: https://github.com/kUspehu/google-ads-merchant-product-control/tree/v1.0.2
-- Інструкція встановлення: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/install.md
-- Довідник налаштувань: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/settings.md
-- Troubleshooting: https://github.com/kUspehu/google-ads-merchant-product-control/blob/main/docs/troubleshooting.md
+- Репозиторій: https://github.com/bazhinalex05/google-ads-merchant-product-control
+- Поточний файл скрипта: https://github.com/bazhinalex05/google-ads-merchant-product-control/blob/main/script.js
+- Raw-версія для копіювання: https://raw.githubusercontent.com/bazhinalex05/google-ads-merchant-product-control/main/script.js
+- Стабільний тег v1.0.2: https://github.com/bazhinalex05/google-ads-merchant-product-control/tree/v1.0.2
+- Інструкція встановлення: https://github.com/bazhinalex05/google-ads-merchant-product-control/blob/main/docs/install.md
+- Довідник налаштувань: https://github.com/bazhinalex05/google-ads-merchant-product-control/blob/main/docs/settings.md
+- Troubleshooting: https://github.com/bazhinalex05/google-ads-merchant-product-control/blob/main/docs/troubleshooting.md
 
 ## Як використовувати стабільну версію
 
