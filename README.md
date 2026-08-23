@@ -16,6 +16,7 @@ Do not use this repository for the extended large-catalog version or for unrelat
 - `docs/install.md` - installation steps.
 - `docs/settings.md` - core Settings sheet reference.
 - `docs/troubleshooting.md` - common setup and runtime issues.
+- `docs/workflow.md` - versioning and development workflow.
 - `archive/source-google-doc.md` - original Google Doc source used for the first migration.
 
 ## Quick Start
@@ -32,3 +33,6 @@ Do not use this repository for the extended large-catalog version or for unrelat
 
 Initial GitHub migration: `v1.0.0`.
 
+## Source Of Truth
+
+GitHub is the source of truth for this script. Google Docs copies are historical references only and should not be edited as the active code.
