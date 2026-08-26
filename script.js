@@ -4001,6 +4001,7 @@ function isGeneratedDashboardSheet_(sheet) {
       sheet.getRange(2, 13).getFormula()
     ].join("\n");
     if (formulas.indexOf("ProductDiagnostics") !== -1) return true;
+    if (formulas.indexOf("DashboardData!") !== -1) return true;
 
 
     var values = [
