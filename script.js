@@ -456,7 +456,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 5. Етапи воронки --", "", ""],
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
-    ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4 або customLabel0..customLabel4. Це джерело, не заголовок допфіда."],
+    ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand або title. Це джерело, не заголовок допфіда."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не трогать."],
     ["-- 6. Карантин --", "", ""],
@@ -550,6 +550,10 @@ function formatSettingsTemplate_(sheet, rows) {
     .requireValueInList(["custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"], true)
     .setAllowInvalid(false)
     .build();
+  var benchmarkSourceRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(getBenchmarkLabelFieldOptions_(), true)
+    .setAllowInvalid(false)
+    .build();
 
 
   for (var r = 1; r < rowCount; r++) {
@@ -558,8 +562,10 @@ function formatSettingsTemplate_(sheet, rows) {
     if (typeof rows[r][1] === "boolean") {
       sheet.getRange(r + 1, 2).setDataValidation(boolRule);
     }
-    if (settingKey === "product_type_custom_label_field" || settingKey === "benchmark_label_field" || settingKey === "funnel_stage_output_attribute") {
+    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute") {
       sheet.getRange(r + 1, 2).setDataValidation(customLabelRule);
+    } else if (settingKey === "benchmark_label_field") {
+      sheet.getRange(r + 1, 2).setDataValidation(benchmarkSourceRule);
     }
   }
 
@@ -595,6 +601,25 @@ function isRequiredSetupSetting_(key) {
     "benchmark_label_field",
     "funnel_stage_output_attribute"
   ].indexOf(key) >= 0;
+}
+
+
+function getBenchmarkLabelFieldOptions_() {
+  return [
+    "custom_label_0",
+    "custom_label_1",
+    "custom_label_2",
+    "custom_label_3",
+    "custom_label_4",
+    "product_type",
+    "product_type_l1",
+    "product_type_l2",
+    "product_type_l3",
+    "product_type_l4",
+    "product_type_l5",
+    "brand",
+    "title"
+  ];
 }
 
 
@@ -743,8 +768,8 @@ function validateRuntimeSettings_(settings) {
 
 
   if (settings.enableBenchmarkGrouping) {
-    if (!toMerchantApiCustomLabelField_(settings.benchmarkLabelField)) {
-      throw new Error("benchmark_label_field має бути custom_label_0..custom_label_4 або customLabel0..customLabel4.");
+    if (!isAllowedBenchmarkLabelField_(settings.benchmarkLabelField)) {
+      throw new Error("benchmark_label_field має бути custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand або title.");
     }
   }
 
@@ -1347,9 +1372,57 @@ function getBenchmarkGroup_(merchantProduct, settings) {
   if (!settings.enableBenchmarkGrouping) return settings.defaultBenchmarkGroup;
 
 
-  var value = getMerchantProductAttribute_(merchantProduct, toMerchantApiCustomLabelField_(settings.benchmarkLabelField));
+  var value = getBenchmarkLabelFieldValue_(merchantProduct, settings);
   value = safeTrim_(value);
   return value || settings.defaultBenchmarkGroup;
+}
+
+
+function isAllowedBenchmarkLabelField_(fieldName) {
+  var normalized = normalizeBenchmarkLabelField_(fieldName);
+  var options = getBenchmarkLabelFieldOptions_();
+  for (var i = 0; i < options.length; i++) {
+    if (normalized === options[i]) return true;
+  }
+  return false;
+}
+
+
+function normalizeBenchmarkLabelField_(fieldName) {
+  var rawValue = safeTrim_(fieldName);
+  var customLabel = toMerchantApiCustomLabelField_(rawValue);
+  if (customLabel) return merchantApiCustomLabelToFeedHeader_(customLabel);
+  return rawValue.toLowerCase();
+}
+
+
+function merchantApiCustomLabelToFeedHeader_(fieldName) {
+  var match = safeTrim_(fieldName).match(/^customLabel([0-4])$/);
+  return match ? "custom_label_" + match[1] : "";
+}
+
+
+function getBenchmarkLabelFieldValue_(merchantProduct, settings) {
+  var fieldName = normalizeBenchmarkLabelField_(settings && settings.benchmarkLabelField);
+  var customLabel = toMerchantApiCustomLabelField_(fieldName);
+  if (customLabel) return getMerchantProductAttribute_(merchantProduct, customLabel);
+  if (fieldName === "product_type") return normalizeProductType_(getPrimaryProductType_(merchantProduct, settings));
+  if (fieldName === "brand") return getMerchantProductAttribute_(merchantProduct, "brand");
+  if (fieldName === "title") return getMerchantProductAttribute_(merchantProduct, "title");
+
+  var levelMatch = fieldName.match(/^product_type_l([1-5])$/);
+  if (levelMatch) {
+    var level = Number(levelMatch[1]);
+    var path = splitProductType_(getPrimaryProductType_(merchantProduct, settings), level);
+    return path[level - 1] || "";
+  }
+  return "";
+}
+
+
+function getPrimaryProductType_(merchantProduct, settings) {
+  var productTypes = getProductTypeStrings_(merchantProduct, settings || {});
+  return productTypes.length > 0 ? productTypes[0] : "";
 }
 
 

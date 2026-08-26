@@ -1,5 +1,10 @@
 # Журнал змін
 
+## Unreleased
+
+- Додано розширений список джерел для `benchmark_label_field`: `custom_label_0`...`custom_label_4`, `product_type`, `product_type_l1`...`product_type_l5`, `brand`, `title`.
+- Оновлено логіку читання benchmark / priority групи, щоб Funnel Builder міг групувати товари не тільки за custom label, а й за категорією, рівнем категорії, брендом або назвою.
+
 ## v1.0.2 - 2026-08-23
 
 - Уточнено актуальні стабільні посилання після переходу документації українською.
