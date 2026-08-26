@@ -2647,12 +2647,10 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
   }
 
 
-  removeProtectionsForSheet_(sheet);
   sheet.clearContents();
-  applySeasonalityCheckboxValidations_(sheet, output.length, header);
+
 
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
-  applySeasonalityCheckboxValidations_(sheet, output.length, header);
   formatSeasonalitySheet_(sheet, output.length, header, settings);
   if (products.length > 0) sheet.getRange(2, 1, products.length, 1).setNumberFormat("@");
 }
@@ -2696,7 +2694,12 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
   var colCount = header.length;
   sheet.getRange(1, 1, rowCount, colCount).setBackground(null).setFontWeight("normal");
   sheet.getRange(1, 1, 1, colCount).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
+  var boolRule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
   if (rowCount > 1) {
+    ["category_winter", "category_spring", "category_summer", "category_autumn", "manual_winter", "manual_spring", "manual_summer", "manual_autumn", "winter", "spring", "summer", "autumn"].forEach(function(name) {
+      var col = findHeaderIndex_(header, name) + 1;
+      if (col > 0) sheet.getRange(2, col, rowCount - 1, 1).setDataValidation(boolRule);
+    });
     var manualStartCol = findHeaderIndex_(header, "manual_winter") + 1;
     if (manualStartCol > 0) sheet.getRange(2, manualStartCol, rowCount - 1, 4).setBackground(MANUAL_BACKGROUND);
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
@@ -2708,17 +2711,6 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
     removeProtectionsForSheet_(sheet);
   }
   sheet.setFrozenRows(1);
-}
-
-
-function applySeasonalityCheckboxValidations_(sheet, rowCount, header) {
-  if (rowCount <= 1) return;
-  var firstCol = findHeaderIndex_(header, "manual_winter") + 1;
-  var lastCol = findHeaderIndex_(header, "autumn") + 1;
-  if (firstCol <= 0 || lastCol <= 0 || lastCol < firstCol) return;
-
-  var boolRule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
-  sheet.getRange(2, firstCol, rowCount - 1, lastCol - firstCol + 1).setDataValidation(boolRule);
 }
 
 
