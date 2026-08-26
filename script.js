@@ -144,12 +144,10 @@ function runUnifiedProductControl() {
   }
 
 
-  var seasonalityMap = {};
-  if (settings.enableSeasonalityFilter) {
-    seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
-    writeSeasonalitySheet_(sheets.seasonality, merchantProducts, seasonalityMap, settings.maxLevels, settings);
-  } else {
-    Logger.log("Seasonality пропущено через enable_seasonality_filter=false.");
+  Logger.log("Reading Seasonality manual state...");
+  var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
+  if (!settings.enableSeasonalityFilter) {
+    Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
   }
   var funnelMap = {};
   if (settings.enableFunnelBuilder || settings.enableQuarantine) {
@@ -192,6 +190,10 @@ function runUnifiedProductControl() {
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
+
+  Logger.log("Writing Seasonality sheet...");
+  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
+  Logger.log("Seasonality sheet written.");
 
 
   if (settings.enableProductsWrite) {
@@ -456,7 +458,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 5. Етапи воронки --", "", ""],
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
-    ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4 або customLabel0..customLabel4. Це джерело, не заголовок допфіда."],
+    ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand або title. Це джерело, не заголовок допфіда."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не трогать."],
     ["-- 6. Карантин --", "", ""],
@@ -550,6 +552,10 @@ function formatSettingsTemplate_(sheet, rows) {
     .requireValueInList(["custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"], true)
     .setAllowInvalid(false)
     .build();
+  var benchmarkSourceRule = SpreadsheetApp.newDataValidation()
+    .requireValueInList(getBenchmarkLabelFieldOptions_(), true)
+    .setAllowInvalid(false)
+    .build();
 
 
   for (var r = 1; r < rowCount; r++) {
@@ -558,8 +564,10 @@ function formatSettingsTemplate_(sheet, rows) {
     if (typeof rows[r][1] === "boolean") {
       sheet.getRange(r + 1, 2).setDataValidation(boolRule);
     }
-    if (settingKey === "product_type_custom_label_field" || settingKey === "benchmark_label_field" || settingKey === "funnel_stage_output_attribute") {
+    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute") {
       sheet.getRange(r + 1, 2).setDataValidation(customLabelRule);
+    } else if (settingKey === "benchmark_label_field") {
+      sheet.getRange(r + 1, 2).setDataValidation(benchmarkSourceRule);
     }
   }
 
@@ -595,6 +603,25 @@ function isRequiredSetupSetting_(key) {
     "benchmark_label_field",
     "funnel_stage_output_attribute"
   ].indexOf(key) >= 0;
+}
+
+
+function getBenchmarkLabelFieldOptions_() {
+  return [
+    "custom_label_0",
+    "custom_label_1",
+    "custom_label_2",
+    "custom_label_3",
+    "custom_label_4",
+    "product_type",
+    "product_type_l1",
+    "product_type_l2",
+    "product_type_l3",
+    "product_type_l4",
+    "product_type_l5",
+    "brand",
+    "title"
+  ];
 }
 
 
@@ -743,8 +770,8 @@ function validateRuntimeSettings_(settings) {
 
 
   if (settings.enableBenchmarkGrouping) {
-    if (!toMerchantApiCustomLabelField_(settings.benchmarkLabelField)) {
-      throw new Error("benchmark_label_field має бути custom_label_0..custom_label_4 або customLabel0..customLabel4.");
+    if (!isAllowedBenchmarkLabelField_(settings.benchmarkLabelField)) {
+      throw new Error("benchmark_label_field має бути custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand або title.");
     }
   }
 
@@ -1347,9 +1374,57 @@ function getBenchmarkGroup_(merchantProduct, settings) {
   if (!settings.enableBenchmarkGrouping) return settings.defaultBenchmarkGroup;
 
 
-  var value = getMerchantProductAttribute_(merchantProduct, toMerchantApiCustomLabelField_(settings.benchmarkLabelField));
+  var value = getBenchmarkLabelFieldValue_(merchantProduct, settings);
   value = safeTrim_(value);
   return value || settings.defaultBenchmarkGroup;
+}
+
+
+function isAllowedBenchmarkLabelField_(fieldName) {
+  var normalized = normalizeBenchmarkLabelField_(fieldName);
+  var options = getBenchmarkLabelFieldOptions_();
+  for (var i = 0; i < options.length; i++) {
+    if (normalized === options[i]) return true;
+  }
+  return false;
+}
+
+
+function normalizeBenchmarkLabelField_(fieldName) {
+  var rawValue = safeTrim_(fieldName);
+  var customLabel = toMerchantApiCustomLabelField_(rawValue);
+  if (customLabel) return merchantApiCustomLabelToFeedHeader_(customLabel);
+  return rawValue.toLowerCase();
+}
+
+
+function merchantApiCustomLabelToFeedHeader_(fieldName) {
+  var match = safeTrim_(fieldName).match(/^customLabel([0-4])$/);
+  return match ? "custom_label_" + match[1] : "";
+}
+
+
+function getBenchmarkLabelFieldValue_(merchantProduct, settings) {
+  var fieldName = normalizeBenchmarkLabelField_(settings && settings.benchmarkLabelField);
+  var customLabel = toMerchantApiCustomLabelField_(fieldName);
+  if (customLabel) return getMerchantProductAttribute_(merchantProduct, customLabel);
+  if (fieldName === "product_type") return normalizeProductType_(getPrimaryProductType_(merchantProduct, settings));
+  if (fieldName === "brand") return getMerchantProductAttribute_(merchantProduct, "brand");
+  if (fieldName === "title") return getMerchantProductAttribute_(merchantProduct, "title");
+
+  var levelMatch = fieldName.match(/^product_type_l([1-5])$/);
+  if (levelMatch) {
+    var level = Number(levelMatch[1]);
+    var path = splitProductType_(getPrimaryProductType_(merchantProduct, settings), level);
+    return path[level - 1] || "";
+  }
+  return "";
+}
+
+
+function getPrimaryProductType_(merchantProduct, settings) {
+  var productTypes = getProductTypeStrings_(merchantProduct, settings || {});
+  return productTypes.length > 0 ? productTypes[0] : "";
 }
 
 
@@ -2509,7 +2584,7 @@ function readSeasonalityManualStateMap_(sheet) {
 }
 
 
-function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, settings) {
+function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settings) {
   var header = ["id", "title", "product_type_full_path"];
   for (var i = 1; i <= maxLevels; i++) header.push("product_type_l" + i);
   header.push(
@@ -2529,22 +2604,21 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
   );
 
 
-  var products = merchantProducts.slice();
-  products.sort(function(a, b) {
-    return naturalCmp_(a.offerId, b.offerId);
+  var rowsForSeasonality = productRows.slice();
+  rowsForSeasonality.sort(function(a, b) {
+    return naturalCmp_(a[0], b[0]);
   });
 
 
   var output = [header];
-  for (var p = 0; p < products.length; p++) {
-    var product = products[p];
-    var manual = manualMap[product.normId] || {};
-    var productType = product.productTypes && product.productTypes.length ? product.productTypes[0] : "";
-    var fullPath = normalizeProductType_(productType);
-    var path = splitProductType_(fullPath, maxLevels);
+  for (var p = 0; p < rowsForSeasonality.length; p++) {
+    var productRow = rowsForSeasonality[p];
+    var offerId = safeTrim_(productRow[0]);
+    var manual = manualMap[normOfferId_(offerId)] || {};
+    var fullPath = normalizeProductType_(productRow[12]);
     var sheetRow = p + 2;
-    var row = [product.offerId, product.title || "", fullPath];
-    for (var level = 0; level < maxLevels; level++) row.push(path[level] || "");
+    var row = [offerId, productRow[1] || "", fullPath];
+    for (var level = 0; level < maxLevels; level++) row.push(productRow[14 + level] || "");
     row.push(
       !!manual.manualWinter,
       !!manual.manualSpring,
@@ -2579,7 +2653,7 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
 
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
   formatSeasonalitySheet_(sheet, output.length, header, settings);
-  if (products.length > 0) sheet.getRange(2, 1, products.length, 1).setNumberFormat("@");
+  if (rowsForSeasonality.length > 0) sheet.getRange(2, 1, rowsForSeasonality.length, 1).setNumberFormat("@");
 }
 
 
@@ -3030,8 +3104,8 @@ function writeProductsSheet_(sheet, rows, settings) {
 
 
   sheet.getRange(1, 1, 1, 3).setValues([["id", "excluded_destination", "excluded_destination"]]);
-  ensureProductsFunnelHeaderFormula_(sheet, settings);
-  ensureProductsBenchmarkHeaderFormula_(sheet, settings, includeBenchmarkLabel);
+  writeProductsFunnelHeader_(sheet, settings);
+  writeProductsBenchmarkHeader_(sheet, settings, includeBenchmarkLabel);
   writeRowsInChunks_(sheet, 2, 1, output, settings.writeChunkSize, "Products");
 
 
@@ -3042,18 +3116,9 @@ function writeProductsSheet_(sheet, rows, settings) {
 }
 
 
-function ensureProductsFunnelHeaderFormula_(sheet, settings) {
+function writeProductsFunnelHeader_(sheet, settings) {
   var cell = sheet.getRange(1, 4);
-  if (cell.getFormula()) return;
-  cell.setFormula(buildProductsFunnelHeaderFormula_(settings));
-}
-
-
-function buildProductsFunnelHeaderFormula_(settings) {
-  var settingsSheetName = settings.settingsSheetName || SETTINGS_SHEET_NAME;
-  var fallback = safeTrim_(settings.funnelStageOutputAttribute).toLowerCase() || "custom_label_2";
-  return '=IFERROR(VLOOKUP("funnel_stage_output_attribute",' +
-    quoteSheetNameForFormula_(settingsSheetName) + '!A:B,2,FALSE),"' + fallback + '")';
+  cell.setValue(safeTrim_(settings.funnelStageOutputAttribute).toLowerCase() || "custom_label_2");
 }
 
 
@@ -3064,22 +3129,13 @@ function shouldWriteProductsBenchmarkLabel_(settings) {
 }
 
 
-function ensureProductsBenchmarkHeaderFormula_(sheet, settings, enabled) {
+function writeProductsBenchmarkHeader_(sheet, settings, enabled) {
   var cell = sheet.getRange(1, 5);
   if (!enabled) {
     cell.clearContent();
     return;
   }
-  if (cell.getFormula()) return;
-  cell.setFormula(buildProductsBenchmarkHeaderFormula_(settings));
-}
-
-
-function buildProductsBenchmarkHeaderFormula_(settings) {
-  var settingsSheetName = settings.settingsSheetName || SETTINGS_SHEET_NAME;
-  var fallback = safeTrim_(settings.benchmarkLabelField).toLowerCase() || "custom_label_4";
-  return '=IFERROR(VLOOKUP("benchmark_label_field",' +
-    quoteSheetNameForFormula_(settingsSheetName) + '!A:B,2,FALSE),"' + fallback + '")';
+  cell.setValue(safeTrim_(settings.benchmarkLabelField).toLowerCase() || "custom_label_4");
 }
 
 
@@ -3376,7 +3432,8 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
   var budgetRows = buildDashboardBudgetRows_(groupDefs);
   var stageSpendRows = buildDashboardStageSpendRows_(groupDefs, settings);
   var dashboardColCount = Math.max(16, stageSpendRows[0].length);
-  ensureDashboardSheetSize_(sheet, 160, dashboardColCount);
+  var dashboardRowCount = getDashboardDataRequiredRows_(groupDefs, budgetRows, stageSpendRows);
+  ensureDashboardSheetSize_(sheet, dashboardRowCount, dashboardColCount);
 
 
   var title = "Unified Product Control DashboardData";
@@ -3386,16 +3443,23 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
   }
 
 
-  writeDashboardBlock_(sheet, 3, 1, "Періоди даних", periodRows, shouldFormatDashboardData);
-  writeDashboardBlock_(sheet, 9, 1, "Загальна сводка", summaryRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardSummaryUnits_(sheet, 10, summaryRows.length, currencyFormat);
-  writeDashboardBlock_(sheet, 9, 12, "Доля витрат за групами - " + formatPeriodLabel_(funnelPeriod), budgetRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardBudgetUnits_(sheet, 10, budgetRows.length, currencyFormat);
-  writeDashboardBlock_(sheet, 17, 1, "Витрати за групами та етапами - " + formatPeriodLabel_(funnelPeriod), stageSpendRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardStageSpendUnits_(sheet, 18, stageSpendRows.length, stageSpendRows[0].length, currencyFormat);
+  var periodStartRow = 3;
+  var summaryStartRow = 9;
+  var budgetStartRow = 9;
+  var budgetBottomRow = getDashboardBlockBottomRow_(budgetStartRow, budgetRows);
+  var stageSpendStartRow = Math.max(17, budgetBottomRow + 3);
 
 
-  var startRow = 17 + stageSpendRows.length + 3;
+  writeDashboardBlock_(sheet, periodStartRow, 1, "Періоди даних", periodRows, shouldFormatDashboardData);
+  writeDashboardBlock_(sheet, summaryStartRow, 1, "Загальна сводка", summaryRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardSummaryUnits_(sheet, summaryStartRow + 1, summaryRows.length, currencyFormat);
+  writeDashboardBlock_(sheet, budgetStartRow, 12, "Доля витрат за групами - " + formatPeriodLabel_(funnelPeriod), budgetRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardBudgetUnits_(sheet, budgetStartRow + 1, budgetRows.length, currencyFormat);
+  writeDashboardBlock_(sheet, stageSpendStartRow, 1, "Витрати за групами та етапами - " + formatPeriodLabel_(funnelPeriod), stageSpendRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardStageSpendUnits_(sheet, stageSpendStartRow + 1, stageSpendRows.length, stageSpendRows[0].length, currencyFormat);
+
+
+  var startRow = stageSpendStartRow + stageSpendRows.length + 3;
   for (var i = 0; i < groupDefs.length; i++) {
     var blockRows = buildDashboardFunnelRows_(groupDefs[i], settings, currencyCode);
     writeDashboardBlock_(sheet, startRow, 1, groupDefs[i].label + " - " + formatPeriodLabel_(funnelPeriod), blockRows, shouldFormatDashboardData);
@@ -3405,6 +3469,24 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
 
 
   if (shouldFormatDashboardData) formatDashboardDataSheet_(sheet, startRow + 2, dashboardColCount);
+}
+
+
+function getDashboardDataRequiredRows_(groupDefs, budgetRows, stageSpendRows) {
+  var budgetStartRow = 9;
+  var budgetBottomRow = getDashboardBlockBottomRow_(budgetStartRow, budgetRows);
+  var stageSpendStartRow = Math.max(17, budgetBottomRow + 3);
+  var startRow = stageSpendStartRow + stageSpendRows.length + 3;
+  var funnelBlockRows = getDashboardFunnelStages_().length + 2;
+  for (var i = 0; i < groupDefs.length; i++) {
+    startRow += funnelBlockRows + 3;
+  }
+  return Math.max(160, startRow + 2);
+}
+
+
+function getDashboardBlockBottomRow_(startRow, rows) {
+  return startRow + Math.max(0, rows ? rows.length : 0);
 }
 
 
@@ -3919,6 +4001,7 @@ function isGeneratedDashboardSheet_(sheet) {
       sheet.getRange(2, 13).getFormula()
     ].join("\n");
     if (formulas.indexOf("ProductDiagnostics") !== -1) return true;
+    if (formulas.indexOf("DashboardData!") !== -1) return true;
 
 
     var values = [
@@ -3942,32 +4025,31 @@ function writeInitialDashboardSheet_(sheet, settings) {
   ensureDashboardSheetSize_(sheet, 70, 18);
 
 
-  var dataSheet = quoteSheetNameForFormula_(settings.dashboardDataSheetName);
   var diagSheet = quoteSheetNameForFormula_(settings.productDiagnosticsSheetName);
   var currencyCode = getAccountCurrencyCode_();
   var currencyFormat = currencyNumberFormat_(currencyCode);
 
 
-  writeDashboardDataBackedBlock_(sheet, 1, "Товари з конверсіями", [
-    ["без продажів", dataSheetFormula_(dataSheet, "B35-B29"), dataSheetFormula_(dataSheet, "C35-C29"), dataSheetFormula_(dataSheet, "D35-D29"), dataSheetFormula_(dataSheet, "E35-E29"), dataSheetFormula_(dataSheet, "F35-F29"), dataSheetFormula_(dataSheet, "G35-G29")],
-    ["продажі", dataSheetFormula_(dataSheet, "B29"), dataSheetFormula_(dataSheet, "C29"), dataSheetFormula_(dataSheet, "D29"), dataSheetFormula_(dataSheet, "E29"), dataSheetFormula_(dataSheet, "F29"), dataSheetFormula_(dataSheet, "G29")]
+  writeDashboardDiagnosticsBlock_(sheet, 1, "Товари з конверсіями", [
+    dashboardDiagnosticsTotalMinusStageRow_(diagSheet, "без продажів", "1 продажі"),
+    dashboardDiagnosticsStageRow_(diagSheet, "продажі", "1 продажі")
   ]);
 
 
-  writeDashboardDataBackedBlock_(sheet, 6, "Клікабельні товари", [
-    ["високі кліки", dataSheetFormula_(dataSheet, "SUM(B29:B31)"), dataSheetFormula_(dataSheet, "SUM(C29:C31)"), dataSheetFormula_(dataSheet, "SUM(D29:D31)"), dataSheetFormula_(dataSheet, "SUM(E29:E31)"), dataSheetFormula_(dataSheet, "SUM(F29:F31)"), dataSheetFormula_(dataSheet, "SUM(G29:G31)")],
-    ["низькі кліки", dataSheetFormula_(dataSheet, "SUM(B32:B34)"), dataSheetFormula_(dataSheet, "SUM(C32:C34)"), dataSheetFormula_(dataSheet, "SUM(D32:D34)"), dataSheetFormula_(dataSheet, "SUM(E32:E34)"), dataSheetFormula_(dataSheet, "SUM(F32:F34)"), dataSheetFormula_(dataSheet, "SUM(G32:G34)")]
+  writeDashboardDiagnosticsBlock_(sheet, 6, "Клікабельні товари", [
+    dashboardDiagnosticsStagesRow_(diagSheet, "високі кліки", ["1 продажі", "2 вк+вп", "3 вк+нп"]),
+    dashboardDiagnosticsStagesRow_(diagSheet, "низькі кліки", ["4 нк+вп", "5 нк+нп", "6 без стат"])
   ]);
 
 
-  writeDashboardDataBackedBlock_(sheet, 11, "Популярні в пошуку", [
-    ["високі покази", dataSheetFormula_(dataSheet, "B29+B30+B32"), dataSheetFormula_(dataSheet, "C29+C30+C32"), dataSheetFormula_(dataSheet, "D29+D30+D32"), dataSheetFormula_(dataSheet, "E29+E30+E32"), dataSheetFormula_(dataSheet, "F29+F30+F32"), dataSheetFormula_(dataSheet, "G29+G30+G32")],
-    ["низькі покази", dataSheetFormula_(dataSheet, "B31+B33+B34"), dataSheetFormula_(dataSheet, "C31+C33+C34"), dataSheetFormula_(dataSheet, "D31+D33+D34"), dataSheetFormula_(dataSheet, "E31+E33+E34"), dataSheetFormula_(dataSheet, "F31+F33+F34"), dataSheetFormula_(dataSheet, "G31+G33+G34")]
+  writeDashboardDiagnosticsBlock_(sheet, 11, "Популярні в пошуку", [
+    dashboardDiagnosticsStagesRow_(diagSheet, "високі покази", ["1 продажі", "2 вк+вп", "4 нк+вп"]),
+    dashboardDiagnosticsStagesRow_(diagSheet, "низькі покази", ["3 вк+нп", "5 нк+нп", "6 без стат"])
   ]);
 
 
-  writeDashboardStageSpendSource_(sheet, dataSheet);
-  writeDashboardSummaryCard_(sheet, dataSheet);
+  writeDashboardStageSpendSource_(sheet, diagSheet);
+  writeDashboardSummaryCard_(sheet, diagSheet);
   writeDashboardQuarantineCard_(sheet, diagSheet, settings);
   writeDashboardSeasonalityCard_(sheet, settings);
   formatDashboardSheet_(sheet, currencyFormat);
@@ -3975,12 +4057,82 @@ function writeInitialDashboardSheet_(sheet, settings) {
 }
 
 
-function dataSheetFormula_(dataSheet, expression) {
-  return "=" + expression.replace(/([A-Z]+[0-9]+(?::[A-Z]+[0-9]+)?)/g, dataSheet + "!$1");
+function dashboardDiagnosticsColumn_(diagSheet, headerName) {
+  return 'INDEX(' + diagSheet + '!A:ZZ,,MATCH("' + headerName + '",' + diagSheet + '!1:1,0))';
 }
 
 
-function writeDashboardDataBackedBlock_(sheet, startRow, title, rows) {
+function dashboardDiagnosticsTotalCountFormula_(diagSheet) {
+  return '=COUNTIF(' + dashboardDiagnosticsColumn_(diagSheet, "id") + ',"<>")-1';
+}
+
+
+function dashboardDiagnosticsTotalSumFormula_(diagSheet, metricHeader) {
+  return '=SUM(' + dashboardDiagnosticsColumn_(diagSheet, metricHeader) + ')';
+}
+
+
+function dashboardDiagnosticsStageCountExpr_(diagSheet, stage) {
+  return 'COUNTIF(' + dashboardDiagnosticsColumn_(diagSheet, "funnel_stage") + ',"' + stage + '")';
+}
+
+
+function dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stage) {
+  return 'SUMIF(' + dashboardDiagnosticsColumn_(diagSheet, "funnel_stage") + ',"' + stage + '",' + dashboardDiagnosticsColumn_(diagSheet, metricHeader) + ')';
+}
+
+
+function dashboardDiagnosticsStagesCountFormula_(diagSheet, stages) {
+  var parts = [];
+  for (var i = 0; i < stages.length; i++) parts.push(dashboardDiagnosticsStageCountExpr_(diagSheet, stages[i]));
+  return "=" + parts.join("+");
+}
+
+
+function dashboardDiagnosticsStagesSumFormula_(diagSheet, metricHeader, stages) {
+  var parts = [];
+  for (var i = 0; i < stages.length; i++) parts.push(dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stages[i]));
+  return "=" + parts.join("+");
+}
+
+
+function dashboardDiagnosticsStageRow_(diagSheet, label, stage) {
+  return dashboardDiagnosticsStagesRow_(diagSheet, label, [stage]);
+}
+
+
+function dashboardDiagnosticsStagesRow_(diagSheet, label, stages) {
+  return [
+    label,
+    dashboardDiagnosticsStagesCountFormula_(diagSheet, stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "impressions", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "clicks", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "conversions", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "conversion_value", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", stages)
+  ];
+}
+
+
+function dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, metricHeader, stage) {
+  return dashboardDiagnosticsTotalSumFormula_(diagSheet, metricHeader) + '-' + dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stage);
+}
+
+
+function dashboardDiagnosticsTotalMinusStageRow_(diagSheet, label, stage) {
+  return [
+    label,
+    dashboardDiagnosticsTotalCountFormula_(diagSheet) + '-' + dashboardDiagnosticsStageCountExpr_(diagSheet, stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "impressions", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "clicks", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "conversions", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "conversion_value", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "cost", stage)
+  ];
+}
+
+
+function writeDashboardDiagnosticsBlock_(sheet, startRow, title, rows) {
   var header = [[title, "Кількість товарів", "Покази", "Кліки", "Конверсії", "Цінність конв.", "Витрати"]];
   sheet.getRange(startRow, 1, 1, 7).setValues(header);
   sheet.getRange(startRow + 1, 1, rows.length, 7).setValues(rows);
@@ -4006,32 +4158,32 @@ function writeDashboardLegacyBlock_(sheet, startRow, title, segments, diagSheet,
 }
 
 
-function writeDashboardStageSpendSource_(sheet, dataSheet) {
+function writeDashboardStageSpendSource_(sheet, diagSheet) {
   sheet.getRange(1, 11, 1, 2).setValues([["Етап", "Витрати"]]);
   var rows = [
-    [dataSheetFormula_(dataSheet, "A29"), dataSheetFormula_(dataSheet, "G29")],
-    [dataSheetFormula_(dataSheet, "A30"), dataSheetFormula_(dataSheet, "G30")],
-    [dataSheetFormula_(dataSheet, "A31"), dataSheetFormula_(dataSheet, "G31")],
-    [dataSheetFormula_(dataSheet, "A32"), dataSheetFormula_(dataSheet, "G32")],
-    [dataSheetFormula_(dataSheet, "A33"), dataSheetFormula_(dataSheet, "G33")],
-    [dataSheetFormula_(dataSheet, "A34"), dataSheetFormula_(dataSheet, "G34")]
+    ["1 продажі", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["1 продажі"])],
+    ["2 вк+вп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["2 вк+вп"])],
+    ["3 вк+нп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["3 вк+нп"])],
+    ["4 нк+вп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["4 нк+вп"])],
+    ["5 нк+нп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["5 нк+нп"])],
+    ["6 без стат", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["6 без стат"])]
   ];
   sheet.getRange(2, 11, rows.length, 2).setValues(rows);
 }
 
 
-function writeDashboardSummaryCard_(sheet, dataSheet) {
+function writeDashboardSummaryCard_(sheet, diagSheet) {
   var rows = [
     ["Загалом", ""],
     ["за останні 14 днів", ""],
     ["Товарів", "ROAS"],
-    [dataSheetFormula_(dataSheet, 'D11&" шт."'), dataSheetFormula_(dataSheet, "J11")],
+    [dashboardDiagnosticsTotalCountFormula_(diagSheet) + '&" шт."', '=IFERROR(' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversion_value").replace(/^=/, "") + '/' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost").replace(/^=/, "") + ',0)'],
     ["", ""],
     ["CPA", "Conversions"],
-    [dataSheetFormula_(dataSheet, "H11"), dataSheetFormula_(dataSheet, "G11")],
+    ['=IFERROR(' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost").replace(/^=/, "") + '/' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversions").replace(/^=/, "") + ',0)', dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversions")],
     ["", ""],
     ["CValue", "Витрати"],
-    [dataSheetFormula_(dataSheet, "I11"), dataSheetFormula_(dataSheet, "F11")]
+    [dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversion_value"), dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost")]
   ];
   sheet.getRange(16, 8, rows.length, 2).setValues(rows);
 }
@@ -4061,7 +4213,7 @@ function writeDashboardQuarantineCard_(sheet, diagSheet, settings) {
 
 
 function dashboardSettingsBoolFormula_(settingsSheet, key) {
-  return 'LOWER(TO_TEXT(IFERROR(VLOOKUP("' + key + '",' + settingsSheet + '!A:B,2,FALSE),"")))="true"';
+  return 'IFERROR(VLOOKUP("' + key + '",' + settingsSheet + '!A:B,2,FALSE),FALSE)=TRUE';
 }
 
 
@@ -4129,11 +4281,10 @@ function formatDashboardSheet_(sheet, currencyFormat) {
   sheet.getRange(16, 11, 1, 2).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
   sheet.getRange(16, 13, 1, 1).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
   sheet.getRange(17, 11, 4, 1).setBackground(light).setFontWeight("bold");
-  sheet.getRange(22, 11, 5, 4).setHorizontalAlignment("center");
+  sheet.getRange(22, 11, 6, 2).setHorizontalAlignment("center");
   sheet.getRange(22, 11, 1, 2).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
-  sheet.getRange(22, 14, 1, 1).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
-  sheet.getRange(23, 11, 4, 1).setBackground(light).setFontWeight("bold");
-  sheet.getRange(22, 11, 5, 4).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
+  sheet.getRange(23, 11, 5, 1).setBackground(light).setFontWeight("bold");
+  sheet.getRange(22, 11, 6, 2).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
   sheet.getRange(16, 11, 5, 3).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
 
 

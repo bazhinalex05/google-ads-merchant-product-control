@@ -36,6 +36,9 @@
 
 ## Funnel і карантин
 
+- `enable_benchmark_grouping` - рахувати пороги Funnel Builder окремо по benchmark / priority групах.
+- `benchmark_label_field` - джерело benchmark / priority групи. Доступні варіанти: `custom_label_0`...`custom_label_4`, `product_type`, `product_type_l1`...`product_type_l5`, `brand`, `title`.
+- `default_benchmark_group` - fallback-група для товарів без значення у вибраному джерелі.
 - `funnel_days_ago`
 - `exclude_last_days`
 - `problem_threshold`

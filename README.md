@@ -35,6 +35,10 @@ Unified Merchant Product Control - це Google Ads Script для ecommerce-ак�
 
 Перша GitHub-міграція коду: `v1.0.0`.
 
+## Benchmark / priority
+
+`benchmark_label_field` у листі `Settings` визначає джерело групи порівняння для Funnel Builder. Доступні варіанти: `custom_label_0`...`custom_label_4`, `product_type`, `product_type_l1`...`product_type_l5`, `brand`, `title`.
+
 ## Джерело правди
 
 GitHub є джерелом правди для цього скрипта. Google Docs-копії залишаються тільки історичними посиланнями й не мають редагуватися як активний код.
