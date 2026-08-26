@@ -3103,8 +3103,8 @@ function writeProductsSheet_(sheet, rows, settings) {
 
 
   sheet.getRange(1, 1, 1, 3).setValues([["id", "excluded_destination", "excluded_destination"]]);
-  ensureProductsFunnelHeaderFormula_(sheet, settings);
-  ensureProductsBenchmarkHeaderFormula_(sheet, settings, includeBenchmarkLabel);
+  writeProductsFunnelHeader_(sheet, settings);
+  writeProductsBenchmarkHeader_(sheet, settings, includeBenchmarkLabel);
   writeRowsInChunks_(sheet, 2, 1, output, settings.writeChunkSize, "Products");
 
 
@@ -3115,18 +3115,9 @@ function writeProductsSheet_(sheet, rows, settings) {
 }
 
 
-function ensureProductsFunnelHeaderFormula_(sheet, settings) {
+function writeProductsFunnelHeader_(sheet, settings) {
   var cell = sheet.getRange(1, 4);
-  if (cell.getFormula()) return;
-  cell.setFormula(buildProductsFunnelHeaderFormula_(settings));
-}
-
-
-function buildProductsFunnelHeaderFormula_(settings) {
-  var settingsSheetName = settings.settingsSheetName || SETTINGS_SHEET_NAME;
-  var fallback = safeTrim_(settings.funnelStageOutputAttribute).toLowerCase() || "custom_label_2";
-  return '=IFERROR(VLOOKUP("funnel_stage_output_attribute",' +
-    quoteSheetNameForFormula_(settingsSheetName) + '!A:B,2,FALSE),"' + fallback + '")';
+  cell.setValue(safeTrim_(settings.funnelStageOutputAttribute).toLowerCase() || "custom_label_2");
 }
 
 
@@ -3137,22 +3128,13 @@ function shouldWriteProductsBenchmarkLabel_(settings) {
 }
 
 
-function ensureProductsBenchmarkHeaderFormula_(sheet, settings, enabled) {
+function writeProductsBenchmarkHeader_(sheet, settings, enabled) {
   var cell = sheet.getRange(1, 5);
   if (!enabled) {
     cell.clearContent();
     return;
   }
-  if (cell.getFormula()) return;
-  cell.setFormula(buildProductsBenchmarkHeaderFormula_(settings));
-}
-
-
-function buildProductsBenchmarkHeaderFormula_(settings) {
-  var settingsSheetName = settings.settingsSheetName || SETTINGS_SHEET_NAME;
-  var fallback = safeTrim_(settings.benchmarkLabelField).toLowerCase() || "custom_label_4";
-  return '=IFERROR(VLOOKUP("benchmark_label_field",' +
-    quoteSheetNameForFormula_(settingsSheetName) + '!A:B,2,FALSE),"' + fallback + '")';
+  cell.setValue(safeTrim_(settings.benchmarkLabelField).toLowerCase() || "custom_label_4");
 }
 
 
