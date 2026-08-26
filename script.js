@@ -4025,32 +4025,31 @@ function writeInitialDashboardSheet_(sheet, settings) {
   ensureDashboardSheetSize_(sheet, 70, 18);
 
 
-  var dataSheet = quoteSheetNameForFormula_(settings.dashboardDataSheetName);
   var diagSheet = quoteSheetNameForFormula_(settings.productDiagnosticsSheetName);
   var currencyCode = getAccountCurrencyCode_();
   var currencyFormat = currencyNumberFormat_(currencyCode);
 
 
-  writeDashboardDataBackedBlock_(sheet, 1, "Товари з конверсіями", [
-    ["без продажів", dashboardAllFunnelFormula_(dataSheet, "B", 8, "-", "B", 2), dashboardAllFunnelFormula_(dataSheet, "C", 8, "-", "C", 2), dashboardAllFunnelFormula_(dataSheet, "D", 8, "-", "D", 2), dashboardAllFunnelFormula_(dataSheet, "E", 8, "-", "E", 2), dashboardAllFunnelFormula_(dataSheet, "F", 8, "-", "F", 2), dashboardAllFunnelFormula_(dataSheet, "G", 8, "-", "G", 2)],
-    ["продажі", dashboardAllFunnelFormula_(dataSheet, "B", 2), dashboardAllFunnelFormula_(dataSheet, "C", 2), dashboardAllFunnelFormula_(dataSheet, "D", 2), dashboardAllFunnelFormula_(dataSheet, "E", 2), dashboardAllFunnelFormula_(dataSheet, "F", 2), dashboardAllFunnelFormula_(dataSheet, "G", 2)]
+  writeDashboardDiagnosticsBlock_(sheet, 1, "Товари з конверсіями", [
+    dashboardDiagnosticsTotalMinusStageRow_(diagSheet, "без продажів", "1 продажі"),
+    dashboardDiagnosticsStageRow_(diagSheet, "продажі", "1 продажі")
   ]);
 
 
-  writeDashboardDataBackedBlock_(sheet, 6, "Клікабельні товари", [
-    ["високі кліки", dashboardAllFunnelSumFormula_(dataSheet, "B", 2, 4), dashboardAllFunnelSumFormula_(dataSheet, "C", 2, 4), dashboardAllFunnelSumFormula_(dataSheet, "D", 2, 4), dashboardAllFunnelSumFormula_(dataSheet, "E", 2, 4), dashboardAllFunnelSumFormula_(dataSheet, "F", 2, 4), dashboardAllFunnelSumFormula_(dataSheet, "G", 2, 4)],
-    ["низькі кліки", dashboardAllFunnelSumFormula_(dataSheet, "B", 5, 7), dashboardAllFunnelSumFormula_(dataSheet, "C", 5, 7), dashboardAllFunnelSumFormula_(dataSheet, "D", 5, 7), dashboardAllFunnelSumFormula_(dataSheet, "E", 5, 7), dashboardAllFunnelSumFormula_(dataSheet, "F", 5, 7), dashboardAllFunnelSumFormula_(dataSheet, "G", 5, 7)]
+  writeDashboardDiagnosticsBlock_(sheet, 6, "Клікабельні товари", [
+    dashboardDiagnosticsStagesRow_(diagSheet, "високі кліки", ["1 продажі", "2 вк+вп", "3 вк+нп"]),
+    dashboardDiagnosticsStagesRow_(diagSheet, "низькі кліки", ["4 нк+вп", "5 нк+нп", "6 без стат"])
   ]);
 
 
-  writeDashboardDataBackedBlock_(sheet, 11, "Популярні в пошуку", [
-    ["високі покази", dashboardAllFunnelMultiFormula_(dataSheet, "B", [2, 3, 5]), dashboardAllFunnelMultiFormula_(dataSheet, "C", [2, 3, 5]), dashboardAllFunnelMultiFormula_(dataSheet, "D", [2, 3, 5]), dashboardAllFunnelMultiFormula_(dataSheet, "E", [2, 3, 5]), dashboardAllFunnelMultiFormula_(dataSheet, "F", [2, 3, 5]), dashboardAllFunnelMultiFormula_(dataSheet, "G", [2, 3, 5])],
-    ["низькі покази", dashboardAllFunnelMultiFormula_(dataSheet, "B", [4, 6, 7]), dashboardAllFunnelMultiFormula_(dataSheet, "C", [4, 6, 7]), dashboardAllFunnelMultiFormula_(dataSheet, "D", [4, 6, 7]), dashboardAllFunnelMultiFormula_(dataSheet, "E", [4, 6, 7]), dashboardAllFunnelMultiFormula_(dataSheet, "F", [4, 6, 7]), dashboardAllFunnelMultiFormula_(dataSheet, "G", [4, 6, 7])]
+  writeDashboardDiagnosticsBlock_(sheet, 11, "Популярні в пошуку", [
+    dashboardDiagnosticsStagesRow_(diagSheet, "високі покази", ["1 продажі", "2 вк+вп", "4 нк+вп"]),
+    dashboardDiagnosticsStagesRow_(diagSheet, "низькі покази", ["3 вк+нп", "5 нк+нп", "6 без стат"])
   ]);
 
 
-  writeDashboardStageSpendSource_(sheet, dataSheet);
-  writeDashboardSummaryCard_(sheet, dataSheet);
+  writeDashboardStageSpendSource_(sheet, diagSheet);
+  writeDashboardSummaryCard_(sheet, diagSheet);
   writeDashboardQuarantineCard_(sheet, diagSheet, settings);
   writeDashboardSeasonalityCard_(sheet, settings);
   formatDashboardSheet_(sheet, currencyFormat);
@@ -4058,43 +4057,82 @@ function writeInitialDashboardSheet_(sheet, settings) {
 }
 
 
-function dataSheetFormula_(dataSheet, expression) {
-  return "=" + expression.replace(/([A-Z]+[0-9]+(?::[A-Z]+[0-9]+)?)/g, dataSheet + "!$1");
+function dashboardDiagnosticsColumn_(diagSheet, headerName) {
+  return 'INDEX(' + diagSheet + '!A:ZZ,,MATCH("' + headerName + '",' + diagSheet + '!1:1,0))';
 }
 
 
-function dashboardAllFunnelBaseRowExpression_(dataSheet) {
-  return 'MATCH("Весь асортимент - *",' + dataSheet + '!A:A,0)';
+function dashboardDiagnosticsTotalCountFormula_(diagSheet) {
+  return '=COUNTIF(' + dashboardDiagnosticsColumn_(diagSheet, "id") + ',"<>")-1';
 }
 
 
-function dashboardAllFunnelCellExpression_(dataSheet, col, rowOffset) {
-  return 'INDEX(' + dataSheet + '!' + col + ':' + col + ',' + dashboardAllFunnelBaseRowExpression_(dataSheet) + '+' + rowOffset + ')';
+function dashboardDiagnosticsTotalSumFormula_(diagSheet, metricHeader) {
+  return '=SUM(' + dashboardDiagnosticsColumn_(diagSheet, metricHeader) + ')';
 }
 
 
-function dashboardAllFunnelFormula_(dataSheet, col, rowOffset, operator, col2, rowOffset2) {
-  var expression = dashboardAllFunnelCellExpression_(dataSheet, col, rowOffset);
-  if (operator) expression += operator + dashboardAllFunnelCellExpression_(dataSheet, col2, rowOffset2);
-  return "=" + expression;
+function dashboardDiagnosticsStageCountExpr_(diagSheet, stage) {
+  return 'COUNTIF(' + dashboardDiagnosticsColumn_(diagSheet, "funnel_stage") + ',"' + stage + '")';
 }
 
 
-function dashboardAllFunnelSumFormula_(dataSheet, col, startOffset, endOffset) {
-  return '=SUM(' + dashboardAllFunnelCellExpression_(dataSheet, col, startOffset) + ':' + dashboardAllFunnelCellExpression_(dataSheet, col, endOffset) + ')';
+function dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stage) {
+  return 'SUMIF(' + dashboardDiagnosticsColumn_(diagSheet, "funnel_stage") + ',"' + stage + '",' + dashboardDiagnosticsColumn_(diagSheet, metricHeader) + ')';
 }
 
 
-function dashboardAllFunnelMultiFormula_(dataSheet, col, rowOffsets) {
+function dashboardDiagnosticsStagesCountFormula_(diagSheet, stages) {
   var parts = [];
-  for (var i = 0; i < rowOffsets.length; i++) {
-    parts.push(dashboardAllFunnelCellExpression_(dataSheet, col, rowOffsets[i]));
-  }
+  for (var i = 0; i < stages.length; i++) parts.push(dashboardDiagnosticsStageCountExpr_(diagSheet, stages[i]));
   return "=" + parts.join("+");
 }
 
 
-function writeDashboardDataBackedBlock_(sheet, startRow, title, rows) {
+function dashboardDiagnosticsStagesSumFormula_(diagSheet, metricHeader, stages) {
+  var parts = [];
+  for (var i = 0; i < stages.length; i++) parts.push(dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stages[i]));
+  return "=" + parts.join("+");
+}
+
+
+function dashboardDiagnosticsStageRow_(diagSheet, label, stage) {
+  return dashboardDiagnosticsStagesRow_(diagSheet, label, [stage]);
+}
+
+
+function dashboardDiagnosticsStagesRow_(diagSheet, label, stages) {
+  return [
+    label,
+    dashboardDiagnosticsStagesCountFormula_(diagSheet, stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "impressions", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "clicks", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "conversions", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "conversion_value", stages),
+    dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", stages)
+  ];
+}
+
+
+function dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, metricHeader, stage) {
+  return dashboardDiagnosticsTotalSumFormula_(diagSheet, metricHeader) + '-' + dashboardDiagnosticsStageSumExpr_(diagSheet, metricHeader, stage);
+}
+
+
+function dashboardDiagnosticsTotalMinusStageRow_(diagSheet, label, stage) {
+  return [
+    label,
+    dashboardDiagnosticsTotalCountFormula_(diagSheet) + '-' + dashboardDiagnosticsStageCountExpr_(diagSheet, stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "impressions", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "clicks", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "conversions", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "conversion_value", stage),
+    dashboardDiagnosticsTotalMinusStageFormula_(diagSheet, "cost", stage)
+  ];
+}
+
+
+function writeDashboardDiagnosticsBlock_(sheet, startRow, title, rows) {
   var header = [[title, "Кількість товарів", "Покази", "Кліки", "Конверсії", "Цінність конв.", "Витрати"]];
   sheet.getRange(startRow, 1, 1, 7).setValues(header);
   sheet.getRange(startRow + 1, 1, rows.length, 7).setValues(rows);
@@ -4120,32 +4158,32 @@ function writeDashboardLegacyBlock_(sheet, startRow, title, segments, diagSheet,
 }
 
 
-function writeDashboardStageSpendSource_(sheet, dataSheet) {
+function writeDashboardStageSpendSource_(sheet, diagSheet) {
   sheet.getRange(1, 11, 1, 2).setValues([["Етап", "Витрати"]]);
   var rows = [
-    [dashboardAllFunnelFormula_(dataSheet, "A", 2), dashboardAllFunnelFormula_(dataSheet, "G", 2)],
-    [dashboardAllFunnelFormula_(dataSheet, "A", 3), dashboardAllFunnelFormula_(dataSheet, "G", 3)],
-    [dashboardAllFunnelFormula_(dataSheet, "A", 4), dashboardAllFunnelFormula_(dataSheet, "G", 4)],
-    [dashboardAllFunnelFormula_(dataSheet, "A", 5), dashboardAllFunnelFormula_(dataSheet, "G", 5)],
-    [dashboardAllFunnelFormula_(dataSheet, "A", 6), dashboardAllFunnelFormula_(dataSheet, "G", 6)],
-    [dashboardAllFunnelFormula_(dataSheet, "A", 7), dashboardAllFunnelFormula_(dataSheet, "G", 7)]
+    ["1 продажі", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["1 продажі"])],
+    ["2 вк+вп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["2 вк+вп"])],
+    ["3 вк+нп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["3 вк+нп"])],
+    ["4 нк+вп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["4 нк+вп"])],
+    ["5 нк+нп", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["5 нк+нп"])],
+    ["6 без стат", dashboardDiagnosticsStagesSumFormula_(diagSheet, "cost", ["6 без стат"])]
   ];
   sheet.getRange(2, 11, rows.length, 2).setValues(rows);
 }
 
 
-function writeDashboardSummaryCard_(sheet, dataSheet) {
+function writeDashboardSummaryCard_(sheet, diagSheet) {
   var rows = [
     ["Загалом", ""],
     ["за останні 14 днів", ""],
     ["Товарів", "ROAS"],
-    [dataSheetFormula_(dataSheet, 'D11&" шт."'), dataSheetFormula_(dataSheet, "J11")],
+    [dashboardDiagnosticsTotalCountFormula_(diagSheet) + '&" шт."', '=IFERROR(' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversion_value").replace(/^=/, "") + '/' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost").replace(/^=/, "") + ',0)'],
     ["", ""],
     ["CPA", "Conversions"],
-    [dataSheetFormula_(dataSheet, "H11"), dataSheetFormula_(dataSheet, "G11")],
+    ['=IFERROR(' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost").replace(/^=/, "") + '/' + dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversions").replace(/^=/, "") + ',0)', dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversions")],
     ["", ""],
     ["CValue", "Витрати"],
-    [dataSheetFormula_(dataSheet, "I11"), dataSheetFormula_(dataSheet, "F11")]
+    [dashboardDiagnosticsTotalSumFormula_(diagSheet, "conversion_value"), dashboardDiagnosticsTotalSumFormula_(diagSheet, "cost")]
   ];
   sheet.getRange(16, 8, rows.length, 2).setValues(rows);
 }
