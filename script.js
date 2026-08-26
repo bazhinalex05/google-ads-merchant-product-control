@@ -4281,11 +4281,10 @@ function formatDashboardSheet_(sheet, currencyFormat) {
   sheet.getRange(16, 11, 1, 2).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
   sheet.getRange(16, 13, 1, 1).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
   sheet.getRange(17, 11, 4, 1).setBackground(light).setFontWeight("bold");
-  sheet.getRange(22, 11, 5, 4).setHorizontalAlignment("center");
+  sheet.getRange(22, 11, 6, 2).setHorizontalAlignment("center");
   sheet.getRange(22, 11, 1, 2).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
-  sheet.getRange(22, 14, 1, 1).setBackground(blue).setFontColor("#ffffff").setFontWeight("bold");
-  sheet.getRange(23, 11, 4, 1).setBackground(light).setFontWeight("bold");
-  sheet.getRange(22, 11, 5, 4).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
+  sheet.getRange(23, 11, 5, 1).setBackground(light).setFontWeight("bold");
+  sheet.getRange(22, 11, 6, 2).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
   sheet.getRange(16, 11, 5, 3).setBorder(true, true, true, true, true, true, blue, SpreadsheetApp.BorderStyle.SOLID);
 
 
