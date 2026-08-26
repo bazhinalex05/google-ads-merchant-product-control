@@ -144,12 +144,10 @@ function runUnifiedProductControl() {
   }
 
 
-  var seasonalityMap = {};
-  if (settings.enableSeasonalityFilter) {
-    seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
-    writeSeasonalitySheet_(sheets.seasonality, merchantProducts, seasonalityMap, settings.maxLevels, settings);
-  } else {
-    Logger.log("Seasonality пропущено через enable_seasonality_filter=false.");
+  Logger.log("Reading Seasonality manual state...");
+  var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
+  if (!settings.enableSeasonalityFilter) {
+    Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
   }
   var funnelMap = {};
   if (settings.enableFunnelBuilder || settings.enableQuarantine) {
@@ -192,6 +190,10 @@ function runUnifiedProductControl() {
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
+
+  Logger.log("Writing Seasonality sheet...");
+  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
+  Logger.log("Seasonality sheet written.");
 
 
   if (settings.enableProductsWrite) {
@@ -2582,7 +2584,7 @@ function readSeasonalityManualStateMap_(sheet) {
 }
 
 
-function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, settings) {
+function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settings) {
   var header = ["id", "title", "product_type_full_path"];
   for (var i = 1; i <= maxLevels; i++) header.push("product_type_l" + i);
   header.push(
@@ -2602,22 +2604,21 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
   );
 
 
-  var products = merchantProducts.slice();
-  products.sort(function(a, b) {
-    return naturalCmp_(a.offerId, b.offerId);
+  var rowsForSeasonality = productRows.slice();
+  rowsForSeasonality.sort(function(a, b) {
+    return naturalCmp_(a[0], b[0]);
   });
 
 
   var output = [header];
-  for (var p = 0; p < products.length; p++) {
-    var product = products[p];
-    var manual = manualMap[product.normId] || {};
-    var productType = product.productTypes && product.productTypes.length ? product.productTypes[0] : "";
-    var fullPath = normalizeProductType_(productType);
-    var path = splitProductType_(fullPath, maxLevels);
+  for (var p = 0; p < rowsForSeasonality.length; p++) {
+    var productRow = rowsForSeasonality[p];
+    var offerId = safeTrim_(productRow[0]);
+    var manual = manualMap[normOfferId_(offerId)] || {};
+    var fullPath = normalizeProductType_(productRow[12]);
     var sheetRow = p + 2;
-    var row = [product.offerId, product.title || "", fullPath];
-    for (var level = 0; level < maxLevels; level++) row.push(path[level] || "");
+    var row = [offerId, productRow[1] || "", fullPath];
+    for (var level = 0; level < maxLevels; level++) row.push(productRow[14 + level] || "");
     row.push(
       !!manual.manualWinter,
       !!manual.manualSpring,
@@ -2652,7 +2653,7 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
 
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
   formatSeasonalitySheet_(sheet, output.length, header, settings);
-  if (products.length > 0) sheet.getRange(2, 1, products.length, 1).setNumberFormat("@");
+  if (rowsForSeasonality.length > 0) sheet.getRange(2, 1, rowsForSeasonality.length, 1).setNumberFormat("@");
 }
 
 
