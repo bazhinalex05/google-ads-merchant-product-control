@@ -2647,11 +2647,12 @@ function writeSeasonalitySheet_(sheet, merchantProducts, manualMap, maxLevels, s
   }
 
 
+  removeProtectionsForSheet_(sheet);
   sheet.clearContents();
-
   applySeasonalityCheckboxValidations_(sheet, output.length, header);
 
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
+  applySeasonalityCheckboxValidations_(sheet, output.length, header);
   formatSeasonalitySheet_(sheet, output.length, header, settings);
   if (products.length > 0) sheet.getRange(2, 1, products.length, 1).setNumberFormat("@");
 }
@@ -2696,7 +2697,6 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
   sheet.getRange(1, 1, rowCount, colCount).setBackground(null).setFontWeight("normal");
   sheet.getRange(1, 1, 1, colCount).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
   if (rowCount > 1) {
-    applySeasonalityCheckboxValidations_(sheet, rowCount, header);
     var manualStartCol = findHeaderIndex_(header, "manual_winter") + 1;
     if (manualStartCol > 0) sheet.getRange(2, manualStartCol, rowCount - 1, 4).setBackground(MANUAL_BACKGROUND);
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
