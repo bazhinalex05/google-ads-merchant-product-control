@@ -3432,7 +3432,8 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
   var budgetRows = buildDashboardBudgetRows_(groupDefs);
   var stageSpendRows = buildDashboardStageSpendRows_(groupDefs, settings);
   var dashboardColCount = Math.max(16, stageSpendRows[0].length);
-  ensureDashboardSheetSize_(sheet, 160, dashboardColCount);
+  var dashboardRowCount = getDashboardDataRequiredRows_(groupDefs, budgetRows, stageSpendRows);
+  ensureDashboardSheetSize_(sheet, dashboardRowCount, dashboardColCount);
 
 
   var title = "Unified Product Control DashboardData";
@@ -3442,16 +3443,23 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
   }
 
 
-  writeDashboardBlock_(sheet, 3, 1, "Періоди даних", periodRows, shouldFormatDashboardData);
-  writeDashboardBlock_(sheet, 9, 1, "Загальна сводка", summaryRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardSummaryUnits_(sheet, 10, summaryRows.length, currencyFormat);
-  writeDashboardBlock_(sheet, 9, 12, "Доля витрат за групами - " + formatPeriodLabel_(funnelPeriod), budgetRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardBudgetUnits_(sheet, 10, budgetRows.length, currencyFormat);
-  writeDashboardBlock_(sheet, 17, 1, "Витрати за групами та етапами - " + formatPeriodLabel_(funnelPeriod), stageSpendRows, shouldFormatDashboardData);
-  if (shouldFormatDashboardData) formatDashboardStageSpendUnits_(sheet, 18, stageSpendRows.length, stageSpendRows[0].length, currencyFormat);
+  var periodStartRow = 3;
+  var summaryStartRow = 9;
+  var budgetStartRow = 9;
+  var budgetBottomRow = getDashboardBlockBottomRow_(budgetStartRow, budgetRows);
+  var stageSpendStartRow = Math.max(17, budgetBottomRow + 3);
 
 
-  var startRow = 17 + stageSpendRows.length + 3;
+  writeDashboardBlock_(sheet, periodStartRow, 1, "Періоди даних", periodRows, shouldFormatDashboardData);
+  writeDashboardBlock_(sheet, summaryStartRow, 1, "Загальна сводка", summaryRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardSummaryUnits_(sheet, summaryStartRow + 1, summaryRows.length, currencyFormat);
+  writeDashboardBlock_(sheet, budgetStartRow, 12, "Доля витрат за групами - " + formatPeriodLabel_(funnelPeriod), budgetRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardBudgetUnits_(sheet, budgetStartRow + 1, budgetRows.length, currencyFormat);
+  writeDashboardBlock_(sheet, stageSpendStartRow, 1, "Витрати за групами та етапами - " + formatPeriodLabel_(funnelPeriod), stageSpendRows, shouldFormatDashboardData);
+  if (shouldFormatDashboardData) formatDashboardStageSpendUnits_(sheet, stageSpendStartRow + 1, stageSpendRows.length, stageSpendRows[0].length, currencyFormat);
+
+
+  var startRow = stageSpendStartRow + stageSpendRows.length + 3;
   for (var i = 0; i < groupDefs.length; i++) {
     var blockRows = buildDashboardFunnelRows_(groupDefs[i], settings, currencyCode);
     writeDashboardBlock_(sheet, startRow, 1, groupDefs[i].label + " - " + formatPeriodLabel_(funnelPeriod), blockRows, shouldFormatDashboardData);
@@ -3461,6 +3469,24 @@ function writeDashboardDataSheet_(sheet, outputRows, merchantProducts, stats14Ma
 
 
   if (shouldFormatDashboardData) formatDashboardDataSheet_(sheet, startRow + 2, dashboardColCount);
+}
+
+
+function getDashboardDataRequiredRows_(groupDefs, budgetRows, stageSpendRows) {
+  var budgetStartRow = 9;
+  var budgetBottomRow = getDashboardBlockBottomRow_(budgetStartRow, budgetRows);
+  var stageSpendStartRow = Math.max(17, budgetBottomRow + 3);
+  var startRow = stageSpendStartRow + stageSpendRows.length + 3;
+  var funnelBlockRows = getDashboardFunnelStages_().length + 2;
+  for (var i = 0; i < groupDefs.length; i++) {
+    startRow += funnelBlockRows + 3;
+  }
+  return Math.max(160, startRow + 2);
+}
+
+
+function getDashboardBlockBottomRow_(startRow, rows) {
+  return startRow + Math.max(0, rows ? rows.length : 0);
 }
 
 
