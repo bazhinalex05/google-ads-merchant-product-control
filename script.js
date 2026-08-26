@@ -3973,7 +3973,7 @@ function isGeneratedDashboardSheet_(sheet) {
       sheet.getRange(2, 7).getFormula(),
       sheet.getRange(2, 13).getFormula()
     ].join("\n");
-    if (formulas.indexOf("ProductDiagnostics") !== -1) return true;
+    if (formulas.indexOf("ProductDiagnostics") !== -1 || formulas.indexOf("DashboardData") !== -1) return true;
 
 
     var values = [
@@ -4116,7 +4116,7 @@ function writeDashboardQuarantineCard_(sheet, diagSheet, settings) {
 
 
 function dashboardSettingsBoolFormula_(settingsSheet, key) {
-  return 'LOWER(TO_TEXT(IFERROR(VLOOKUP("' + key + '",' + settingsSheet + '!A:B,2,FALSE),"")))="true"';
+  return 'IFERROR(VLOOKUP("' + key + '",' + settingsSheet + '!A:B,2,FALSE),FALSE)=TRUE';
 }
 
 
