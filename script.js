@@ -3126,7 +3126,7 @@ function writeProductsSheet_(sheet, rows, settings) {
       rows[r][idx.display],
       rows[r][idx.funnelStage] || ""
     ];
-    if (includeBenchmarkLabel) outRow.push(rows[r][idx.productTypeBenchmarkLabel] || "");
+    if (includeBenchmarkLabel) outRow.push(rows[r][idx.benchmarkGroup] || "");
     output.push(outRow);
   }
 
