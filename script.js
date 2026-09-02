@@ -2775,16 +2775,15 @@ function protectSeasonalityColumnBlock_(sheet, header, firstHeaderName, width, d
   if (firstCol <= 0 || width <= 0) return;
   var range = sheet.getRange(1, firstCol, sheet.getMaxRows(), width);
   var protection = range.protect().setDescription(description);
-  var me = Session.getEffectiveUser();
-  if (me) protection.addEditor(me);
+  var ownerEmail = getProtectionOwnerEmail_();
+  if (ownerEmail) protection.addEditor(ownerEmail);
   var editors = protection.getEditors();
-  var meEmail = me ? me.getEmail() : "";
   var removable = [];
   for (var i = 0; i < editors.length; i++) {
-    if (!meEmail || editors[i].getEmail() !== meEmail) removable.push(editors[i]);
+    if (!ownerEmail || editors[i].getEmail() !== ownerEmail) removable.push(editors[i]);
   }
   if (removable.length > 0) protection.removeEditors(removable);
-  if (me) protection.addEditor(me);
+  if (ownerEmail) protection.addEditor(ownerEmail);
   if (protection.canDomainEdit()) protection.setDomainEdit(false);
 }
 
