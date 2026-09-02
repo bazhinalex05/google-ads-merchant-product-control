@@ -1436,6 +1436,11 @@ function getMerchantProductPrice_(merchantProduct) {
 
 
 function getMerchantProductAttribute_(merchantProduct, fieldName) {
+  if (merchantProduct.attributes &&
+      merchantProduct.attributes[fieldName] !== null &&
+      typeof merchantProduct.attributes[fieldName] !== "undefined") {
+    return merchantProduct.attributes[fieldName];
+  }
   if (merchantProduct.productAttributes &&
       merchantProduct.productAttributes[fieldName] !== null &&
       typeof merchantProduct.productAttributes[fieldName] !== "undefined") {
@@ -1451,16 +1456,44 @@ function getMerchantProductAttribute_(merchantProduct, fieldName) {
 
 function getCustomAttributeValue_(customAttributes, fieldName) {
   if (!customAttributes || !customAttributes.length) return null;
-  var snakeName = fieldName.replace(/([A-Z])/g, "_$1").toLowerCase();
+  var aliases = buildCustomAttributeNameAliases_(fieldName);
   for (var i = 0; i < customAttributes.length; i++) {
     var attr = customAttributes[i];
-    var name = safeTrim_(attr.name);
-    if (name === fieldName || name === snakeName) {
+    var name = normalizeCustomAttributeName_(attr.name);
+    if (aliases[name]) {
       if (attr.value !== null && typeof attr.value !== "undefined") return attr.value;
       if (attr.textValue !== null && typeof attr.textValue !== "undefined") return attr.textValue;
     }
   }
   return null;
+}
+
+
+function buildCustomAttributeNameAliases_(fieldName) {
+  var aliases = {};
+  var raw = safeTrim_(fieldName);
+  var merchantField = toMerchantApiCustomLabelField_(raw);
+  addCustomAttributeNameAlias_(aliases, raw);
+  if (merchantField) {
+    addCustomAttributeNameAlias_(aliases, merchantField);
+    addCustomAttributeNameAlias_(aliases, merchantApiCustomLabelToFeedHeader_(merchantField));
+  }
+  return aliases;
+}
+
+
+function addCustomAttributeNameAlias_(aliases, value) {
+  var normalized = normalizeCustomAttributeName_(value);
+  if (normalized) aliases[normalized] = true;
+}
+
+
+function normalizeCustomAttributeName_(value) {
+  return safeTrim_(value)
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_")
+    .toLowerCase();
 }
 
 
