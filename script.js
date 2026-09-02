@@ -107,6 +107,7 @@ function runUnifiedProductControl() {
     throw new Error("Merchant API повернув 0 товарів після фільтрів. Перевір merchant_id і фільтри на листі Settings.");
   }
   applyExternalProductTypeFeed_(merchantProducts, settings);
+  applyExternalBenchmarkLabelFeed_(merchantProducts, settings);
   Logger.log("Merchant products ready: " + merchantProducts.length);
 
 
@@ -312,6 +313,7 @@ function readSettings_(ss) {
     funnelDaysAgo: 14,
     enableBenchmarkGrouping: true,
     benchmarkLabelField: "custom_label_2",
+    benchmarkLabelFeedUrl: "",
     funnelStageOutputAttribute: "custom_label_2",
     defaultBenchmarkGroup: "other",
     excludeLastDays: 2,
@@ -400,6 +402,7 @@ function readSettings_(ss) {
   defaults.funnelDaysAgo = readSettingInt_(map, "funnel_days_ago", defaults.funnelDaysAgo);
   defaults.enableBenchmarkGrouping = readSettingBool_(map, "enable_benchmark_grouping", defaults.enableBenchmarkGrouping);
   defaults.benchmarkLabelField = readSettingString_(map, "benchmark_label_field", defaults.benchmarkLabelField);
+  defaults.benchmarkLabelFeedUrl = readSettingString_(map, "benchmark_label_feed_url", defaults.benchmarkLabelFeedUrl);
   defaults.funnelStageOutputAttribute = readSettingString_(map, "funnel_stage_output_attribute", defaults.funnelStageOutputAttribute);
   defaults.defaultBenchmarkGroup = readSettingString_(map, "default_benchmark_group", defaults.defaultBenchmarkGroup);
   defaults.excludeLastDays = readSettingInt_(map, "exclude_last_days", defaults.excludeLastDays);
@@ -461,6 +464,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
     ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand або title. Це джерело, не заголовок допфіда."],
+    ["benchmark_label_feed_url", settings.benchmarkLabelFeedUrl, "Необов'язково. Google Sheets допфід з колонками id і benchmark_label_field, наприклад id + custom_label_4. Якщо Merchant API не віддає мітку, скрипт бере benchmark label звідси."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не трогать."],
     ["-- 6. Карантин --", "", ""],
@@ -762,6 +766,12 @@ function validateRuntimeSettings_(settings) {
   for (var productTypeFeedUrlIndex = 0; productTypeFeedUrlIndex < productTypeFeedUrls.length; productTypeFeedUrlIndex++) {
     if (!/^https?:\/\//i.test(productTypeFeedUrls[productTypeFeedUrlIndex])) {
       throw new Error("product_type_feed_url must contain only HTTP/HTTPS URLs.");
+    }
+  }
+  var benchmarkLabelFeedUrls = parseProductTypeFeedUrls_(settings.benchmarkLabelFeedUrl);
+  for (var benchmarkLabelFeedUrlIndex = 0; benchmarkLabelFeedUrlIndex < benchmarkLabelFeedUrls.length; benchmarkLabelFeedUrlIndex++) {
+    if (!/^https:\/\/docs\.google\.com\/spreadsheets\//i.test(benchmarkLabelFeedUrls[benchmarkLabelFeedUrlIndex])) {
+      throw new Error("benchmark_label_feed_url must contain only Google Sheets URLs.");
     }
   }
 
@@ -1288,6 +1298,92 @@ function collectExternalProductTypePairs_(xmlText) {
 }
 
 
+function applyExternalBenchmarkLabelFeed_(merchantProducts, settings) {
+  var urls = parseProductTypeFeedUrls_(settings.benchmarkLabelFeedUrl);
+  if (urls.length === 0) return;
+
+
+  var externalMap = buildExternalBenchmarkLabelMap_(urls, settings.benchmarkLabelField);
+  var matched = 0;
+
+
+  for (var i = 0; i < merchantProducts.length; i++) {
+    var product = merchantProducts[i];
+    var label = externalMap[normOfferId_(product.offerId)];
+    if (!label) continue;
+    product.benchmarkGroup = label;
+    matched++;
+  }
+
+
+  Logger.log("External benchmark label feed URLs: " + urls.length);
+  Logger.log("External benchmark label IDs loaded: " + Object.keys(externalMap).length);
+  Logger.log("External benchmark label matches: " + matched);
+}
+
+
+function buildExternalBenchmarkLabelMap_(urls, benchmarkLabelField) {
+  var map = {};
+  var labelHeader = normalizeBenchmarkLabelField_(benchmarkLabelField);
+  for (var i = 0; i < urls.length; i++) {
+    var pairs = readBenchmarkLabelPairsFromGoogleSheet_(urls[i], labelHeader);
+    Logger.log("External benchmark label feed #" + (i + 1) + " pairs read: " + pairs.length);
+    for (var j = 0; j < pairs.length; j++) {
+      var key = normOfferId_(pairs[j].id);
+      if (!key || map[key]) continue;
+      map[key] = pairs[j].label;
+    }
+  }
+  return map;
+}
+
+
+function readBenchmarkLabelPairsFromGoogleSheet_(url, labelHeader) {
+  var source = SpreadsheetApp.openByUrl(url);
+  var sheet = source.getSheets()[0];
+  var values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+
+
+  var header = values[0] || [];
+  var idIndex = findFirstHeaderIndex_(header, ["id", "g:id", "offer_id", "offerId"]);
+  var labelIndex = findBenchmarkLabelFeedHeaderIndex_(header, labelHeader);
+  if (idIndex < 0) throw new Error("benchmark_label_feed_url sheet must contain id column.");
+  if (labelIndex < 0) throw new Error("benchmark_label_feed_url sheet must contain " + labelHeader + " column.");
+
+
+  var result = [];
+  for (var i = 1; i < values.length; i++) {
+    var id = safeTrim_(values[i][idIndex]);
+    var label = safeTrim_(values[i][labelIndex]);
+    if (!id || !label) continue;
+    result.push({ id: id, label: label });
+  }
+  return result;
+}
+
+
+function findBenchmarkLabelFeedHeaderIndex_(header, labelHeader) {
+  var aliases = buildCustomAttributeNameAliases_(labelHeader);
+  addCustomAttributeNameAlias_(aliases, labelHeader);
+  addCustomAttributeNameAlias_(aliases, "benchmark_label");
+  addCustomAttributeNameAlias_(aliases, "benchmark_group");
+  for (var i = 0; i < header.length; i++) {
+    if (aliases[normalizeCustomAttributeName_(header[i])]) return i;
+  }
+  return -1;
+}
+
+
+function findFirstHeaderIndex_(header, names) {
+  for (var i = 0; i < names.length; i++) {
+    var index = findHeaderIndex_(header, names[i]);
+    if (index >= 0) return index;
+  }
+  return -1;
+}
+
+
 function extractXmlTagValue_(chunk, tagName) {
   var re = new RegExp("<" + escapeRegex_(tagName) + "\\b[^>]*>([\\s\\S]*?)<\\/" + escapeRegex_(tagName) + ">", "i");
   var match = re.exec(chunk);
@@ -1436,6 +1532,11 @@ function getMerchantProductPrice_(merchantProduct) {
 
 
 function getMerchantProductAttribute_(merchantProduct, fieldName) {
+  if (merchantProduct.attributes &&
+      merchantProduct.attributes[fieldName] !== null &&
+      typeof merchantProduct.attributes[fieldName] !== "undefined") {
+    return merchantProduct.attributes[fieldName];
+  }
   if (merchantProduct.productAttributes &&
       merchantProduct.productAttributes[fieldName] !== null &&
       typeof merchantProduct.productAttributes[fieldName] !== "undefined") {
@@ -1451,16 +1552,44 @@ function getMerchantProductAttribute_(merchantProduct, fieldName) {
 
 function getCustomAttributeValue_(customAttributes, fieldName) {
   if (!customAttributes || !customAttributes.length) return null;
-  var snakeName = fieldName.replace(/([A-Z])/g, "_$1").toLowerCase();
+  var aliases = buildCustomAttributeNameAliases_(fieldName);
   for (var i = 0; i < customAttributes.length; i++) {
     var attr = customAttributes[i];
-    var name = safeTrim_(attr.name);
-    if (name === fieldName || name === snakeName) {
+    var name = normalizeCustomAttributeName_(attr.name);
+    if (aliases[name]) {
       if (attr.value !== null && typeof attr.value !== "undefined") return attr.value;
       if (attr.textValue !== null && typeof attr.textValue !== "undefined") return attr.textValue;
     }
   }
   return null;
+}
+
+
+function buildCustomAttributeNameAliases_(fieldName) {
+  var aliases = {};
+  var raw = safeTrim_(fieldName);
+  var merchantField = toMerchantApiCustomLabelField_(raw);
+  addCustomAttributeNameAlias_(aliases, raw);
+  if (merchantField) {
+    addCustomAttributeNameAlias_(aliases, merchantField);
+    addCustomAttributeNameAlias_(aliases, merchantApiCustomLabelToFeedHeader_(merchantField));
+  }
+  return aliases;
+}
+
+
+function addCustomAttributeNameAlias_(aliases, value) {
+  var normalized = normalizeCustomAttributeName_(value);
+  if (normalized) aliases[normalized] = true;
+}
+
+
+function normalizeCustomAttributeName_(value) {
+  return safeTrim_(value)
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .replace(/_+/g, "_")
+    .toLowerCase();
 }
 
 
