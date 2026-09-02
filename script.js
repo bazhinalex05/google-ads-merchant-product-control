@@ -146,6 +146,7 @@ function runUnifiedProductControl() {
 
   Logger.log("Reading Seasonality manual state...");
   var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
+  var productTypeSeasonalityRules = buildProductTypeSeasonalityRules_(productTypeRows, settings.maxLevels);
   if (!settings.enableSeasonalityFilter) {
     Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
   }
@@ -186,13 +187,14 @@ function runUnifiedProductControl() {
     funnelMap,
     quarantineState.activeById,
     seasonalityMap,
+    productTypeSeasonalityRules,
     productTypeBenchmarkRules,
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
 
   Logger.log("Writing Seasonality sheet...");
-  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
+  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, productTypeSeasonalityRules, settings.maxLevels, settings);
   Logger.log("Seasonality sheet written.");
 
 
@@ -2584,7 +2586,7 @@ function readSeasonalityManualStateMap_(sheet) {
 }
 
 
-function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settings) {
+function writeSeasonalitySheet_(sheet, productRows, manualMap, productTypeSeasonalityRules, maxLevels, settings) {
   var header = ["id", "title", "product_type_full_path"];
   for (var i = 1; i <= maxLevels; i++) header.push("product_type_l" + i);
   header.push(
@@ -2616,7 +2618,7 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
     var offerId = safeTrim_(productRow[0]);
     var manual = manualMap[normOfferId_(offerId)] || {};
     var fullPath = normalizeProductType_(productRow[12]);
-    var sheetRow = p + 2;
+    var categoryState = getSeasonalityCategoryState_(splitProductType_(fullPath, maxLevels), productTypeSeasonalityRules, maxLevels);
     var row = [offerId, productRow[1] || "", fullPath];
     for (var level = 0; level < maxLevels; level++) row.push(productRow[14 + level] || "");
     row.push(
@@ -2624,24 +2626,14 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
       !!manual.manualSpring,
       !!manual.manualSummer,
       !!manual.manualAutumn,
-      buildSeasonalityCategoryFormula_(settings, "winter", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "spring", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "summer", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "autumn", sheetRow, maxLevels)
-    );
-    var categoryWinterCol = columnLetter_(findHeaderIndex_(header, "category_winter") + 1);
-    var categorySpringCol = columnLetter_(findHeaderIndex_(header, "category_spring") + 1);
-    var categorySummerCol = columnLetter_(findHeaderIndex_(header, "category_summer") + 1);
-    var categoryAutumnCol = columnLetter_(findHeaderIndex_(header, "category_autumn") + 1);
-    var manualWinterCol = columnLetter_(findHeaderIndex_(header, "manual_winter") + 1);
-    var manualSpringCol = columnLetter_(findHeaderIndex_(header, "manual_spring") + 1);
-    var manualSummerCol = columnLetter_(findHeaderIndex_(header, "manual_summer") + 1);
-    var manualAutumnCol = columnLetter_(findHeaderIndex_(header, "manual_autumn") + 1);
-    row.push(
-      "=OR(" + categoryWinterCol + sheetRow + "=TRUE," + manualWinterCol + sheetRow + "=TRUE)",
-      "=OR(" + categorySpringCol + sheetRow + "=TRUE," + manualSpringCol + sheetRow + "=TRUE)",
-      "=OR(" + categorySummerCol + sheetRow + "=TRUE," + manualSummerCol + sheetRow + "=TRUE)",
-      "=OR(" + categoryAutumnCol + sheetRow + "=TRUE," + manualAutumnCol + sheetRow + "=TRUE)",
+      !!categoryState.winter,
+      !!categoryState.spring,
+      !!categoryState.summer,
+      !!categoryState.autumn,
+      !!categoryState.winter || !!manual.manualWinter,
+      !!categoryState.spring || !!manual.manualSpring,
+      !!categoryState.summer || !!manual.manualSummer,
+      !!categoryState.autumn || !!manual.manualAutumn,
       manual.comment || ""
     );
     output.push(row);
@@ -2657,36 +2649,44 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
 }
 
 
-function buildSeasonalityCategoryFormula_(settings, seasonName, rowNumber, maxLevels) {
-  var productTypesSheet = quoteSheetNameForFormula_(settings.productTypesSheetName);
-  var seasonOffset = { winter: 0, spring: 1, summer: 2, autumn: 3 }[seasonName] || 0;
-  var seasonCol = columnLetter_(maxLevels + 3 + seasonOffset);
-  var pathKeyCol = columnLetter_(maxLevels + 7);
-  var pathDepthCol = columnLetter_(maxLevels + 8);
-  var hasRuleCol = columnLetter_(maxLevels + 9);
-  var prefixesFormula = buildSeasonalityPathPrefixesFormula_(rowNumber, maxLevels);
-
-
-  return "=IFERROR(INDEX(SORT(FILTER({" +
-    productTypesSheet + "!" + seasonCol + ":" + seasonCol + "," +
-    productTypesSheet + "!" + pathDepthCol + ":" + pathDepthCol + "}," +
-    productTypesSheet + "!" + hasRuleCol + ":" + hasRuleCol + "=TRUE," +
-    "ISNUMBER(MATCH(" + productTypesSheet + "!" + pathKeyCol + ":" + pathKeyCol + ",SPLIT(" + prefixesFormula + ",\"♦\"),0))" +
-    "),2,FALSE),1,1),FALSE)";
+function buildProductTypeSeasonalityRules_(productTypeRows, maxLevels) {
+  var result = {};
+  for (var i = 0; i < productTypeRows.length; i++) {
+    var row = productTypeRows[i];
+    var path = normalizePathToFilledLevels_(row.path || [], maxLevels);
+    var key = buildPathKey_(path, maxLevels);
+    var depth = getPathDepth_(path, maxLevels);
+    if (!key || depth <= 0) continue;
+    if (!row.winter && !row.spring && !row.summer && !row.autumn) continue;
+    result[key] = {
+      depth: depth,
+      winter: !!row.winter,
+      spring: !!row.spring,
+      summer: !!row.summer,
+      autumn: !!row.autumn
+    };
+  }
+  return result;
 }
 
 
-function buildSeasonalityPathPrefixesFormula_(rowNumber, maxLevels) {
-  var terms = [];
-  for (var depth = 1; depth <= maxLevels; depth++) {
-    var parts = [];
-    for (var level = 1; level <= depth; level++) {
-      parts.push("$" + columnLetter_(3 + level) + rowNumber);
+function getSeasonalityCategoryState_(path, rules, maxLevels) {
+  path = normalizePathToFilledLevels_(path || [], maxLevels);
+  rules = rules || {};
+  for (var depth = getPathDepth_(path, maxLevels); depth > 0; depth--) {
+    var prefix = createEmptyPath_(maxLevels);
+    for (var i = 0; i < depth; i++) prefix[i] = path[i];
+    var rule = rules[buildPathKey_(prefix, maxLevels)];
+    if (rule) {
+      return {
+        winter: !!rule.winter,
+        spring: !!rule.spring,
+        summer: !!rule.summer,
+        autumn: !!rule.autumn
+      };
     }
-    var deepestCell = "$" + columnLetter_(3 + depth) + rowNumber;
-    terms.push("IF(" + deepestCell + "<>\"\"," + parts.join("&\"|||\"&") + ",\"\")");
   }
-  return "TEXTJOIN(\"♦\",TRUE," + terms.join(",") + ")";
+  return { winter: false, spring: false, summer: false, autumn: false };
 }
 
 
@@ -2761,15 +2761,16 @@ function seasonalityCellToBool_(value) {
 }
 
 
-function getSeasonalityDecision_(product, seasonalityMap, settings) {
+function getSeasonalityDecision_(product, seasonalityMap, productTypeSeasonalityRules, productTypeRules, settings) {
   if (!settings.enableSeasonalityFilter) return { allowed: true, hasSeasonTags: false };
-  var entry = seasonalityMap[product.normId];
-  if (!entry) return { allowed: true, hasSeasonTags: false };
+  var entry = seasonalityMap[product.normId] || {};
+  var productType = chooseProductTypeForOutput_(product.productTypes, productTypeRules, settings.maxLevels, settings.enableProductTypeFilter);
+  var categoryState = getSeasonalityCategoryState_(splitProductType_(productType, settings.maxLevels), productTypeSeasonalityRules, settings.maxLevels);
   var checked = {
-    winter: !!entry.winter,
-    spring: !!entry.spring,
-    summer: !!entry.summer,
-    autumn: !!entry.autumn
+    winter: !!categoryState.winter || !!entry.manualWinter,
+    spring: !!categoryState.spring || !!entry.manualSpring,
+    summer: !!categoryState.summer || !!entry.manualSummer,
+    autumn: !!categoryState.autumn || !!entry.manualAutumn
   };
   var hasSeasonTags = checked.winter || checked.spring || checked.summer || checked.autumn;
   if (!hasSeasonTags) return { allowed: true, hasSeasonTags: false };
@@ -2929,7 +2930,7 @@ function appendAttributionFieldsToRow_(row, attributionMap) {
 }
 
 
-function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, seasonalityMap, productTypeBenchmarkRules, settings) {
+function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, settings) {
   var rows = [];
   var today = Utilities.formatDate(new Date(), AdsApp.currentAccount().getTimeZone(), DATE_FORMAT);
   var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings) : {};
@@ -2949,7 +2950,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var previous = previousMap[p.normId] || { shopping: "", display: "", statusDate: "" };
     var categoryAllowed = isAnyProductTypeAllowed_(p.productTypes, productTypeRules, settings.maxLevels, settings.enableProductTypeFilter);
     var quarantine = activeQuarantineMap[p.normId] || null;
-    var seasonality = getSeasonalityDecision_(p, seasonalityMap, settings);
+    var seasonality = getSeasonalityDecision_(p, seasonalityMap, productTypeSeasonalityRules, productTypeRules, settings);
     var exclusionReasons = [];
     if (!categoryAllowed) pushReason_(exclusionReasons, "PRODUCT_TYPE_NOT_ALLOWED");
     if (!seasonality.allowed) pushReason_(exclusionReasons, "SEASONALITY");
