@@ -89,13 +89,13 @@ function runUnifiedProductControl() {
     dashboardData: getOrCreateSheet_(ss, settings.dashboardDataSheetName),
     productTypes: getOrCreateSheet_(ss, settings.productTypesSheetName),
     seasonality: getOrCreateSheet_(ss, settings.seasonalitySheetName),
-    clientPriority: getOrCreateSheet_(ss, settings.clientPrioritySheetName),
+    priorities: getOrCreatePrioritiesSheet_(ss, settings),
     productDiagnostics: getOrCreateSheet_(ss, settings.productDiagnosticsSheetName),
     quarantineRegistry: getOrCreateSheet_(ss, settings.quarantineRegistrySheetName),
     quarantineLog: getOrCreateSheet_(ss, settings.quarantineLogSheetName)
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
-  ensureClientPrioritySheet_(sheets.clientPriority, settings);
+  ensurePrioritiesSheet_(sheets.priorities, settings);
   Logger.log("Sheets ready.");
 
 
@@ -159,7 +159,7 @@ function runUnifiedProductControl() {
   Logger.log("Reading Seasonality manual state...");
   var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
   Logger.log("Reading client priority state...");
-  var clientPriorityMap = readClientPriorityMap_(sheets.clientPriority);
+  var priorityMap = readPrioritiesMap_(sheets.priorities);
   if (!settings.enableSeasonalityFilter) {
     Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
   }
@@ -205,7 +205,7 @@ function runUnifiedProductControl() {
     productTypeBenchmarkRules,
     productTypePriorityRules,
     productTypeTargetCpaRules,
-    clientPriorityMap,
+    priorityMap,
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
@@ -292,7 +292,7 @@ function readSettings_(ss) {
     dashboardDataSheetName: "DashboardData",
     productTypesSheetName: "ProductTypes",
     seasonalitySheetName: "Seasonality",
-    clientPrioritySheetName: "ClientPriority",
+    prioritySheetName: "Priorities",
     productDiagnosticsSheetName: "ProductDiagnostics",
     quarantineRegistrySheetName: "QuarantineRegistry",
     quarantineLogSheetName: "QuarantineLog",
@@ -391,7 +391,8 @@ function readSettings_(ss) {
   defaults.merchantId = readSettingString_(map, "merchant_id", defaults.merchantId);
   defaults.dashboardSheetName = readSettingString_(map, "dashboard_sheet_name", defaults.dashboardSheetName);
   defaults.dashboardDataSheetName = readSettingString_(map, "dashboard_data_sheet_name", defaults.dashboardDataSheetName);
-  defaults.clientPrioritySheetName = readSettingString_(map, "client_priority_sheet_name", defaults.clientPrioritySheetName);
+  defaults.prioritySheetName = readSettingString_(map, "priority_sheet_name", readSettingString_(map, "client_priority_sheet_name", defaults.prioritySheetName));
+  if (safeTrim_(defaults.prioritySheetName) === "ClientPriority") defaults.prioritySheetName = "Priorities";
   defaults.enableProductTypeFilter = readSettingBool_(map, "enable_product_type_filter", defaults.enableProductTypeFilter);
   defaults.enableFunnelBuilder = readSettingBool_(map, "enable_funnel_builder", defaults.enableFunnelBuilder);
   defaults.enableQuarantine = readSettingBool_(map, "enable_quarantine", defaults.enableQuarantine);
@@ -470,7 +471,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["merchant_id", settings.merchantId, "ID Merchant Center. Обов'язково."],
     ["dashboard_sheet_name", settings.dashboardSheetName, "Назва візуального листа Dashboard. Скрипт його не перезаписує."],
     ["dashboard_data_sheet_name", settings.dashboardDataSheetName, "Службовий лист з даними для Dashboard. Скрипт повністю перезаписує тільки його."],
-    ["client_priority_sheet_name", settings.clientPrioritySheetName, "Лист ручних priority group від клієнта. Скрипт створює тільки заголовки і не перезаписує ручний список."],
+    ["priority_sheet_name", settings.prioritySheetName, "Лист Priorities для ручних priority group від клієнта. Скрипт створює тільки заголовки і не перезаписує ручний список."],
     ["-- 2. Увімкнення функцій --", "", ""],
     ["enable_product_type_filter", settings.enableProductTypeFilter, "true = використовувати галочки ProductTypes; false = не фільтрувати по категоріях."],
     ["enable_seasonality_filter", settings.enableSeasonalityFilter, "true = використовувати сезонність на листі Seasonality."],
@@ -494,7 +495,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
     ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand, title або назва custom attribute. Benchmark потрібен для розрахунку і діагностики, не для запису в допфід."],
-    ["priority_label_field", settings.priorityLabelField, "Звідки читати priority group з Merchant API, якщо її немає на листі ClientPriority або ProductTypes: custom_label_0..custom_label_4 або назва custom attribute."],
+    ["priority_label_field", settings.priorityLabelField, "Звідки читати priority group з Merchant API, якщо її немає на листі Priorities або ProductTypes: custom_label_0..custom_label_4 або назва custom attribute."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
     ["priority_output_attribute", settings.priorityOutputAttribute, "Куди писати priority group у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_4."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не чіпати."],
@@ -627,7 +628,7 @@ function setSettingsColumnWidths_(sheet) {
 }
 
 
-function ensureClientPrioritySheet_(sheet, settings) {
+function ensurePrioritiesSheet_(sheet, settings) {
   var header = ["id", "priority_group"];
   var firstRow = sheet.getLastRow() >= 1 ? sheet.getRange(1, 1, 1, Math.max(2, sheet.getLastColumn())).getValues()[0] : [];
   var firstCell = safeTrim_(firstRow[0]);
@@ -646,7 +647,7 @@ function ensureClientPrioritySheet_(sheet, settings) {
 }
 
 
-function readClientPriorityMap_(sheet) {
+function readPrioritiesMap_(sheet) {
   var result = {};
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -3321,8 +3322,8 @@ function appendAttributionFieldsToRow_(row, attributionMap) {
 }
 
 
-function choosePriorityLabel_(product, productTypePriorityRules, clientPriorityMap, settings) {
-  var manualPriority = clientPriorityMap && clientPriorityMap[product.normId] ? safeTrim_(clientPriorityMap[product.normId]) : "";
+function choosePriorityLabel_(product, productTypePriorityRules, priorityMap, settings) {
+  var manualPriority = priorityMap && priorityMap[product.normId] ? safeTrim_(priorityMap[product.normId]) : "";
   if (manualPriority) return manualPriority;
 
   var categoryPriority = chooseProductTypePriorityLabel_(product.productTypes, productTypePriorityRules, settings.maxLevels);
@@ -3333,7 +3334,7 @@ function choosePriorityLabel_(product, productTypePriorityRules, clientPriorityM
 }
 
 
-function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, productTypeTargetCpaRules, clientPriorityMap, settings) {
+function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, productTypeTargetCpaRules, priorityMap, settings) {
   var rows = [];
   var today = Utilities.formatDate(new Date(), AdsApp.currentAccount().getTimeZone(), DATE_FORMAT);
   var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings) : {};
@@ -3397,7 +3398,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var currentFunnelStage = funnel.funnelStage || "";
     var productTypeBenchmarkLabel = chooseProductTypeBenchmarkLabel_(p.productTypes, productTypeBenchmarkRules, settings.maxLevels);
     var effectiveBenchmarkGroup = funnel.benchmarkGroup || productTypeBenchmarkLabel || p.benchmarkGroup || settings.defaultBenchmarkGroup;
-    var priorityLabel = choosePriorityLabel_(p, productTypePriorityRules, clientPriorityMap, settings);
+    var priorityLabel = choosePriorityLabel_(p, productTypePriorityRules, priorityMap, settings);
     var currentConversions = toNumber_(stats.conversions);
     var currentConversionValue = toNumber_(stats.conversionValue);
     var previousFunnelStage = previous.lastSeenFunnelStage || previous.funnelStage || "";
@@ -4885,6 +4886,22 @@ function getOrCreateSheet_(ss, name) {
 }
 
 
+function getOrCreatePrioritiesSheet_(ss, settings) {
+  var targetName = safeTrim_(settings.prioritySheetName) || "Priorities";
+  var sheet = ss.getSheetByName(targetName);
+  if (sheet) return sheet;
+
+  var legacySheet = ss.getSheetByName("ClientPriority");
+  if (legacySheet && targetName !== "ClientPriority") {
+    legacySheet.setName(targetName);
+    Logger.log("Лист ClientPriority перейменовано на " + targetName + ".");
+    return legacySheet;
+  }
+
+  return ss.insertSheet(targetName);
+}
+
+
 function ensureSpreadsheetLocale_(ss) {
   try {
     if (ss.getSpreadsheetLocale && ss.getSpreadsheetLocale() === DEFAULT_SPREADSHEET_LOCALE) return;
@@ -4953,7 +4970,7 @@ function protectManagedSheets_(ss, settings) {
   openSheetNames[settings.productTypesSheetName] = true;
   openSheetNames[settings.dashboardSheetName] = true;
   openSheetNames[settings.dashboardDataSheetName] = true;
-  openSheetNames[settings.clientPrioritySheetName] = true;
+  openSheetNames[settings.prioritySheetName] = true;
   openSheetNames[settings.settingsSheetName || SETTINGS_SHEET_NAME] = true;
   var ownerEmail = getProtectionOwnerEmail_();
   var sheets = ss.getSheets();
