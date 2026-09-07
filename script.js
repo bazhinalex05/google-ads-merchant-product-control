@@ -47,6 +47,8 @@ var HEADER_BACKGROUND = "#c9daf8";
 var SECTION_BACKGROUND = "#e6e6e6";
 var MANUAL_BACKGROUND = "#fff2cc";
 var REQUIRED_SETTING_BACKGROUND = "#f4cccc";
+var GOOD_BACKGROUND = "#d9ead3";
+var BAD_LIGHT_BACKGROUND = "#fce8e6";
 
 
 function main() {
@@ -87,11 +89,13 @@ function runUnifiedProductControl() {
     dashboardData: getOrCreateSheet_(ss, settings.dashboardDataSheetName),
     productTypes: getOrCreateSheet_(ss, settings.productTypesSheetName),
     seasonality: getOrCreateSheet_(ss, settings.seasonalitySheetName),
+    clientPriority: getOrCreateSheet_(ss, settings.clientPrioritySheetName),
     productDiagnostics: getOrCreateSheet_(ss, settings.productDiagnosticsSheetName),
     quarantineRegistry: getOrCreateSheet_(ss, settings.quarantineRegistrySheetName),
     quarantineLog: getOrCreateSheet_(ss, settings.quarantineLogSheetName)
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
+  ensureClientPrioritySheet_(sheets.clientPriority, settings);
   Logger.log("Sheets ready.");
 
 
@@ -128,11 +132,12 @@ function runUnifiedProductControl() {
   var productTypeRules = { allowedPrefixes: [] };
   var productTypeBenchmarkRules = [];
   var productTypePriorityRules = [];
+  var productTypeTargetCpaRules = [];
   var productTypeSeasonalityRules = [];
   var productTypeRows = [];
   var stats30Map = null;
-  if (settings.enableProductTypeFilter || settings.enableSeasonalityFilter) {
-    Logger.log("ProductType filter or Seasonality enabled. Reading ProductTypes and 30d stats...");
+  if (settings.enableProductTypeFilter || settings.enableSeasonalityFilter || settings.enableTargetCpaRule) {
+    Logger.log("ProductType filter, Seasonality or target CPA quarantine enabled. Reading ProductTypes and 30d stats...");
     var manualStateMap = readProductTypeManualStateMap_(sheets.productTypes, settings.maxLevels, settings);
     stats30Map = getAdsStatsMap_(30, 0);
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, []);
@@ -142,16 +147,19 @@ function runUnifiedProductControl() {
     if (settings.enableProductTypeFilter) productTypeRules = buildAllowanceRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
+    productTypeTargetCpaRules = buildProductTypeTargetCpaRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeSeasonalityRules = buildProductTypeSeasonalityRulesFromRows_(productTypeRows, settings.maxLevels);
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, productTypeBenchmarkRules);
     Logger.log("ProductType rows ready: " + productTypeRows.length);
   } else {
-    Logger.log("Фільтр ProductTypes пропущено через enable_product_type_filter=false.");
+    Logger.log("ProductTypes пропущено: фільтр категорій, сезонність і target CPA карантин вимкнені.");
   }
 
 
   Logger.log("Reading Seasonality manual state...");
   var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
+  Logger.log("Reading client priority state...");
+  var clientPriorityMap = readClientPriorityMap_(sheets.clientPriority);
   if (!settings.enableSeasonalityFilter) {
     Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
   }
@@ -176,7 +184,7 @@ function runUnifiedProductControl() {
   };
   if (settings.enableQuarantine) {
     Logger.log("Updating quarantine...");
-    quarantineState = updateQuarantine_(sheets.quarantineRegistry, sheets.quarantineLog, merchantMap, settings);
+    quarantineState = updateQuarantine_(sheets.quarantineRegistry, sheets.quarantineLog, merchantMap, productTypeTargetCpaRules, settings);
     Logger.log("Quarantine updated. Active: " + Object.keys(quarantineState.activeById || {}).length);
   } else {
     Logger.log("Карантин пропущено через enable_quarantine=false.");
@@ -196,6 +204,8 @@ function runUnifiedProductControl() {
     productTypeSeasonalityRules,
     productTypeBenchmarkRules,
     productTypePriorityRules,
+    productTypeTargetCpaRules,
+    clientPriorityMap,
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
@@ -282,6 +292,7 @@ function readSettings_(ss) {
     dashboardDataSheetName: "DashboardData",
     productTypesSheetName: "ProductTypes",
     seasonalitySheetName: "Seasonality",
+    clientPrioritySheetName: "ClientPriority",
     productDiagnosticsSheetName: "ProductDiagnostics",
     quarantineRegistrySheetName: "QuarantineRegistry",
     quarantineLogSheetName: "QuarantineLog",
@@ -320,6 +331,7 @@ function readSettings_(ss) {
     funnelDaysAgo: 14,
     enableBenchmarkGrouping: true,
     benchmarkLabelField: "custom_label_2",
+    priorityLabelField: "custom_label_4",
     funnelStageOutputAttribute: "custom_label_3",
     priorityOutputAttribute: "custom_label_4",
     defaultBenchmarkGroup: "other",
@@ -337,6 +349,10 @@ function readSettings_(ss) {
     expensiveClickLookbackDays: 0,
     expensiveClickThreshold: 100.00,
     expensiveClickQuarantineDays: 7,
+    enableTargetCpaRule: true,
+    targetCpaLookbackDays: 30,
+    targetCpaExcessThreshold: 0,
+    targetCpaQuarantineDays: 7,
     quarantineLogMaxRows: 1000,
     merchantApiPageSize: 1000,
     merchantApiRetryCount: 5,
@@ -375,6 +391,7 @@ function readSettings_(ss) {
   defaults.merchantId = readSettingString_(map, "merchant_id", defaults.merchantId);
   defaults.dashboardSheetName = readSettingString_(map, "dashboard_sheet_name", defaults.dashboardSheetName);
   defaults.dashboardDataSheetName = readSettingString_(map, "dashboard_data_sheet_name", defaults.dashboardDataSheetName);
+  defaults.clientPrioritySheetName = readSettingString_(map, "client_priority_sheet_name", defaults.clientPrioritySheetName);
   defaults.enableProductTypeFilter = readSettingBool_(map, "enable_product_type_filter", defaults.enableProductTypeFilter);
   defaults.enableFunnelBuilder = readSettingBool_(map, "enable_funnel_builder", defaults.enableFunnelBuilder);
   defaults.enableQuarantine = readSettingBool_(map, "enable_quarantine", defaults.enableQuarantine);
@@ -409,6 +426,7 @@ function readSettings_(ss) {
   defaults.funnelDaysAgo = readSettingInt_(map, "funnel_days_ago", defaults.funnelDaysAgo);
   defaults.enableBenchmarkGrouping = readSettingBool_(map, "enable_benchmark_grouping", defaults.enableBenchmarkGrouping);
   defaults.benchmarkLabelField = readSettingString_(map, "benchmark_label_field", defaults.benchmarkLabelField);
+  defaults.priorityLabelField = readSettingString_(map, "priority_label_field", defaults.priorityLabelField);
   defaults.funnelStageOutputAttribute = readSettingString_(map, "funnel_stage_output_attribute", defaults.funnelStageOutputAttribute);
   defaults.priorityOutputAttribute = readSettingString_(map, "priority_output_attribute", defaults.priorityOutputAttribute);
   defaults.defaultBenchmarkGroup = readSettingString_(map, "default_benchmark_group", defaults.defaultBenchmarkGroup);
@@ -426,6 +444,10 @@ function readSettings_(ss) {
   defaults.expensiveClickLookbackDays = readSettingInt_(map, "expensive_click_lookback_days", defaults.expensiveClickLookbackDays);
   defaults.expensiveClickThreshold = readSettingNumber_(map, "expensive_click_threshold", defaults.expensiveClickThreshold);
   defaults.expensiveClickQuarantineDays = readSettingInt_(map, "expensive_click_quarantine_days", defaults.expensiveClickQuarantineDays);
+  defaults.enableTargetCpaRule = readSettingBool_(map, "enable_target_cpa_rule", defaults.enableTargetCpaRule);
+  defaults.targetCpaLookbackDays = readSettingInt_(map, "target_cpa_lookback_days", defaults.targetCpaLookbackDays);
+  defaults.targetCpaExcessThreshold = readSettingNumber_(map, "target_cpa_excess_threshold", defaults.targetCpaExcessThreshold);
+  defaults.targetCpaQuarantineDays = readSettingInt_(map, "target_cpa_quarantine_days", defaults.targetCpaQuarantineDays);
   defaults.quarantineLogMaxRows = readSettingInt_(map, "quarantine_log_max_rows", defaults.quarantineLogMaxRows);
   defaults.merchantApiPageSize = readSettingInt_(map, "merchant_api_page_size", defaults.merchantApiPageSize);
   defaults.merchantApiRetryCount = readSettingInt_(map, "merchant_api_retry_count", defaults.merchantApiRetryCount);
@@ -448,6 +470,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["merchant_id", settings.merchantId, "ID Merchant Center. Обов'язково."],
     ["dashboard_sheet_name", settings.dashboardSheetName, "Назва візуального листа Dashboard. Скрипт його не перезаписує."],
     ["dashboard_data_sheet_name", settings.dashboardDataSheetName, "Службовий лист з даними для Dashboard. Скрипт повністю перезаписує тільки його."],
+    ["client_priority_sheet_name", settings.clientPrioritySheetName, "Лист ручних priority group від клієнта. Скрипт створює тільки заголовки і не перезаписує ручний список."],
     ["-- 2. Увімкнення функцій --", "", ""],
     ["enable_product_type_filter", settings.enableProductTypeFilter, "true = використовувати галочки ProductTypes; false = не фільтрувати по категоріях."],
     ["enable_seasonality_filter", settings.enableSeasonalityFilter, "true = використовувати сезонність на листі Seasonality."],
@@ -471,6 +494,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
     ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand, title або назва custom attribute. Benchmark потрібен для розрахунку і діагностики, не для запису в допфід."],
+    ["priority_label_field", settings.priorityLabelField, "Звідки читати priority group з Merchant API, якщо її немає на листі ClientPriority або ProductTypes: custom_label_0..custom_label_4 або назва custom attribute."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
     ["priority_output_attribute", settings.priorityOutputAttribute, "Куди писати priority group у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_4."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не чіпати."],
@@ -497,6 +521,11 @@ function writeSettingsTemplate_(sheet, settings) {
     ["expensive_click_lookback_days", settings.expensiveClickLookbackDays, "Період перевірки дорогого CPC. 0 = один останній перевірений день після exclude_last_days."],
     ["expensive_click_threshold", settings.expensiveClickThreshold, "Поріг середнього CPC."],
     ["expensive_click_quarantine_days", settings.expensiveClickQuarantineDays, "На скільки днів товар піде в карантин через дорогий клік."],
+    ["-- 6.6 Продажі з дорогим CPA --", "", ""],
+    ["enable_target_cpa_rule", settings.enableTargetCpaRule, "true = ставити в карантин товари з продажами, де CPA вище категорійного target_cpa."],
+    ["target_cpa_lookback_days", settings.targetCpaLookbackDays, "Період перевірки CPA карантину: витрати і конверсії за N днів до exclude_last_days."],
+    ["target_cpa_excess_threshold", settings.targetCpaExcessThreshold, "0 = будь-яке перевищення target_cpa; 0.20 = CPA має бути на 20% вище target_cpa."],
+    ["target_cpa_quarantine_days", settings.targetCpaQuarantineDays, "На скільки днів товар піде в карантин через дорогий CPA."],
     ["-- 7. Фільтри фідів і Merchant API --", "", ""],
     ["data_source_filter", settings.dataSourceFilter, "Порожньо = всі фіди. Вказуй короткий data source ID з URL Merchant Center, наприклад 10332461230. Кілька ID через кому."],
     ["feed_label_filter", settings.feedLabelFilter, "Порожньо = всі feed labels. Кілька значень через кому, наприклад UA,PL."],
@@ -567,7 +596,7 @@ function formatSettingsTemplate_(sheet, rows) {
     .build();
   var benchmarkSourceRule = SpreadsheetApp.newDataValidation()
     .requireValueInList(getBenchmarkLabelFieldOptions_(), true)
-    .setAllowInvalid(false)
+    .setAllowInvalid(true)
     .build();
 
 
@@ -579,7 +608,7 @@ function formatSettingsTemplate_(sheet, rows) {
     }
     if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute" || settingKey === "priority_output_attribute") {
       sheet.getRange(r + 1, 2).setDataValidation(customLabelRule);
-    } else if (settingKey === "benchmark_label_field") {
+    } else if (settingKey === "benchmark_label_field" || settingKey === "priority_label_field") {
       sheet.getRange(r + 1, 2).setDataValidation(benchmarkSourceRule);
     }
   }
@@ -598,6 +627,47 @@ function setSettingsColumnWidths_(sheet) {
 }
 
 
+function ensureClientPrioritySheet_(sheet, settings) {
+  var header = ["id", "priority_group"];
+  var firstRow = sheet.getLastRow() >= 1 ? sheet.getRange(1, 1, 1, Math.max(2, sheet.getLastColumn())).getValues()[0] : [];
+  var firstCell = safeTrim_(firstRow[0]);
+  var secondCell = safeTrim_(firstRow[1]);
+  if (!firstCell && !secondCell) {
+    sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  } else {
+    if (findHeaderIndex_(firstRow, "id") < 0) sheet.getRange(1, 1).setValue("id");
+    if (findHeaderIndex_(firstRow, "priority_group") < 0) sheet.getRange(1, 2).setValue("priority_group");
+  }
+  if (settings.enableManagedSheetFormatting) {
+    sheet.getRange(1, 1, 1, 2).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
+    sheet.getRange(2, 1, Math.max(1, sheet.getMaxRows() - 1), 2).setBackground(MANUAL_BACKGROUND);
+    sheet.setFrozenRows(1);
+  }
+}
+
+
+function readClientPriorityMap_(sheet) {
+  var result = {};
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return result;
+
+  var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var idIndex = findHeaderIndex_(header, "id");
+  var priorityIndex = findHeaderIndex_(header, "priority_group");
+  if (idIndex < 0 || priorityIndex < 0) return result;
+
+  var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  for (var i = 0; i < values.length; i++) {
+    var id = safeTrim_(values[i][idIndex]);
+    var priority = safeTrim_(values[i][priorityIndex]);
+    if (!id || !priority) continue;
+    result[normOfferId_(id)] = priority;
+  }
+  return result;
+}
+
+
 function isSettingsServiceKey_(key) {
   return [
     "auto_register_gcp_project",
@@ -613,6 +683,7 @@ function isRequiredSetupSetting_(key) {
   return [
     "merchant_id",
     "benchmark_label_field",
+    "priority_label_field",
     "funnel_stage_output_attribute",
     "priority_output_attribute"
   ].indexOf(key) >= 0;
@@ -795,8 +866,21 @@ function validateRuntimeSettings_(settings) {
   if (!isValidFeedCustomLabelHeader_(settings.priorityOutputAttribute)) {
     throw new Error("priority_output_attribute має бути custom_label_0..custom_label_4.");
   }
+  if (!isAllowedBenchmarkLabelField_(settings.priorityLabelField)) {
+    throw new Error("priority_label_field має бути custom_label_0..custom_label_4 або назвою custom attribute.");
+  }
   if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() === safeTrim_(settings.funnelStageOutputAttribute).toLowerCase()) {
     throw new Error("priority_output_attribute не може збігатися з funnel_stage_output_attribute.");
+  }
+
+  if (settings.targetCpaLookbackDays < 1) {
+    throw new Error("target_cpa_lookback_days must be 1 or more.");
+  }
+  if (settings.targetCpaExcessThreshold < 0) {
+    throw new Error("target_cpa_excess_threshold must be 0 or more.");
+  }
+  if (settings.targetCpaQuarantineDays < 0) {
+    throw new Error("target_cpa_quarantine_days must be 0 or more.");
   }
 }
 
@@ -1033,6 +1117,7 @@ function getMerchantProducts_(settings) {
         productTypes: productTypes,
         price: getMerchantProductPrice_(p),
         benchmarkGroup: getBenchmarkGroup_(p, settings),
+        priorityGroup: getPriorityGroup_(p, settings),
         dataSource: getDataSourceId_(p.dataSource),
         feedLabel: safeTrim_(p.feedLabel),
         contentLanguage: safeTrim_(p.contentLanguage)
@@ -1399,6 +1484,15 @@ function getBenchmarkGroup_(merchantProduct, settings) {
 }
 
 
+function getPriorityGroup_(merchantProduct, settings) {
+  var fieldName = normalizeBenchmarkLabelField_(settings && settings.priorityLabelField);
+  if (!fieldName) return "";
+  var customLabel = toMerchantApiCustomLabelField_(fieldName);
+  if (customLabel) return safeTrim_(getMerchantProductAttribute_(merchantProduct, customLabel));
+  return safeTrim_(getMerchantProductAttribute_(merchantProduct, fieldName));
+}
+
+
 function isAllowedBenchmarkLabelField_(fieldName) {
   var normalized = normalizeBenchmarkLabelField_(fieldName);
   if (!normalized) return false;
@@ -1737,7 +1831,7 @@ function logThresholdStatsByGroup_(statsByGroup) {
 /* ================= Quarantine ================= */
 
 
-function updateQuarantine_(registrySheet, logSheet, merchantMap, settings) {
+function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTargetCpaRules, settings) {
   ensureQuarantineRegistryHeader_(registrySheet);
   ensureQuarantineLogHeader_(logSheet);
 
@@ -1752,6 +1846,7 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, settings) {
   var noSalesStats = settings.enableNoSalesRule ? getAdsStatsMap_(settings.noSalesLookbackDays, settings.excludeLastDays) : {};
   var spendStats = settings.enableSpendRule ? getAdsStatsMap_(settings.spendLookbackDays, settings.excludeLastDays) : {};
   var expensiveClickStats = settings.enableExpensiveClickRule ? getAdsStatsMap_(1, 1) : {};
+  var targetCpaStats = settings.enableTargetCpaRule ? getAdsStatsMap_(settings.targetCpaLookbackDays, settings.excludeLastDays) : {};
 
 
   var candidates = {};
@@ -1763,6 +1858,9 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, settings) {
   }
   if (settings.enableExpensiveClickRule) {
     collectExpensiveClickCandidates_(candidates, expensiveClickStats, merchantMap, settings, today);
+  }
+  if (settings.enableTargetCpaRule) {
+    collectTargetCpaCandidates_(candidates, targetCpaStats, merchantMap, productTypeTargetCpaRules, settings, today);
   }
 
   var touched = {};
@@ -1792,10 +1890,12 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, settings) {
       entry.noSales = entry.noSales || candidate.noSales;
       entry.spend = entry.spend || candidate.spend;
       entry.expensiveClick = entry.expensiveClick || candidate.expensiveClick;
+      entry.targetCpa = entry.targetCpa || candidate.targetCpa;
       entry.noSalesUntil = maxDateStr_(entry.noSalesUntil, candidate.noSalesUntil);
       entry.spendUntil = maxDateStr_(entry.spendUntil, candidate.spendUntil);
       entry.expensiveClickUntil = maxDateStr_(entry.expensiveClickUntil, candidate.expensiveClickUntil);
-      entry.activeUntil = maxDateStr3_(entry.noSalesUntil, entry.spendUntil, entry.expensiveClickUntil);
+      entry.targetCpaUntil = maxDateStr_(entry.targetCpaUntil, candidate.targetCpaUntil);
+      entry.activeUntil = maxDateStr4_(entry.noSalesUntil, entry.spendUntil, entry.expensiveClickUntil, entry.targetCpaUntil);
       entry.problematic = entry.count >= settings.problemThreshold;
     }
     touched[normId] = true;
@@ -1816,7 +1916,8 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, settings) {
     activeById: activeById,
     noSalesStats: noSalesStats,
     spendStats: spendStats,
-    expensiveClickStats: expensiveClickStats
+    expensiveClickStats: expensiveClickStats,
+    targetCpaStats: targetCpaStats
   };
 }
 
@@ -1837,7 +1938,11 @@ function applyEnabledQuarantineRules_(registryMap, settings) {
       entry.expensiveClick = false;
       entry.expensiveClickUntil = "";
     }
-    entry.activeUntil = maxDateStr3_(entry.noSalesUntil, entry.spendUntil, entry.expensiveClickUntil);
+    if (!settings.enableTargetCpaRule) {
+      entry.targetCpa = false;
+      entry.targetCpaUntil = "";
+    }
+    entry.activeUntil = maxDateStr4_(entry.noSalesUntil, entry.spendUntil, entry.expensiveClickUntil, entry.targetCpaUntil);
   }
 }
 
@@ -1885,6 +1990,25 @@ function collectExpensiveClickCandidates_(out, statsMap, merchantMap, settings, 
 }
 
 
+function collectTargetCpaCandidates_(out, statsMap, merchantMap, productTypeTargetCpaRules, settings, today) {
+  for (var normId in statsMap) {
+    if (!statsMap.hasOwnProperty(normId)) continue;
+    var merchantProduct = merchantMap[normId];
+    if (!merchantProduct) continue;
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(merchantProduct.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    if (categoryTargetCpa <= 0) continue;
+    var s = statsMap[normId];
+    if (toNumber_(s.conversions) <= 0) continue;
+    var actualCpa = toNumber_(s.cost) / toNumber_(s.conversions);
+    var limit = categoryTargetCpa * (1 + toNumber_(settings.targetCpaExcessThreshold));
+    if (actualCpa > limit) {
+      Logger.log("TARGET_CPA candidate: id=" + merchantProduct.offerId + ", cpa=" + round2_(actualCpa) + ", targetCpa=" + round2_(categoryTargetCpa) + ", threshold=" + settings.targetCpaExcessThreshold);
+      addQuarantineCandidate_(out, normId, merchantProduct.offerId, "TARGET_CPA", addDays_(today, settings.targetCpaQuarantineDays));
+    }
+  }
+}
+
+
 function addQuarantineCandidate_(out, normId, offerId, reason, untilDate) {
   if (!out[normId]) {
     out[normId] = {
@@ -1893,9 +2017,11 @@ function addQuarantineCandidate_(out, normId, offerId, reason, untilDate) {
       noSales: false,
       spend: false,
       expensiveClick: false,
+      targetCpa: false,
       noSalesUntil: "",
       spendUntil: "",
       expensiveClickUntil: "",
+      targetCpaUntil: "",
       activeUntil: ""
     };
   }
@@ -1914,10 +2040,13 @@ function addQuarantineCandidate_(out, normId, offerId, reason, untilDate) {
   } else if (reason === "EXPENSIVE_CLICK") {
     out[normId].expensiveClick = true;
     out[normId].expensiveClickUntil = untilStr;
+  } else if (reason === "TARGET_CPA") {
+    out[normId].targetCpa = true;
+    out[normId].targetCpaUntil = untilStr;
   }
 
 
-  out[normId].activeUntil = maxDateStr3_(out[normId].noSalesUntil, out[normId].spendUntil, out[normId].expensiveClickUntil);
+  out[normId].activeUntil = maxDateStr4_(out[normId].noSalesUntil, out[normId].spendUntil, out[normId].expensiveClickUntil, out[normId].targetCpaUntil);
 }
 
 
@@ -1933,7 +2062,9 @@ function ensureQuarantineRegistryHeader_(sheet) {
     "no_sales_until",
     "spend_until",
     "expensive_click_until",
-    "last_added"
+    "last_added",
+    "reason_target_cpa",
+    "target_cpa_until"
   ];
   ensureHeaderRow_(sheet, header);
 }
@@ -1959,7 +2090,7 @@ function readQuarantineRegistry_(sheet) {
   if (lastRow <= 1) return map;
 
 
-  var values = sheet.getRange(2, 1, lastRow - 1, 11).getDisplayValues();
+  var values = sheet.getRange(2, 1, lastRow - 1, 13).getDisplayValues();
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
     var id = safeTrim_(row[0]);
@@ -1975,7 +2106,9 @@ function readQuarantineRegistry_(sheet) {
       noSalesUntil: safeTrim_(row[7]),
       spendUntil: safeTrim_(row[8]),
       expensiveClickUntil: safeTrim_(row[9]),
-      lastAdded: safeTrim_(row[10])
+      lastAdded: safeTrim_(row[10]),
+      targetCpa: safeTrim_(row[11]) === "YES",
+      targetCpaUntil: safeTrim_(row[12])
     };
   }
   return map;
@@ -1989,11 +2122,13 @@ function makeEmptyQuarantineEntry_(offerId) {
     noSales: false,
     spend: false,
     expensiveClick: false,
+    targetCpa: false,
     problematic: false,
     activeUntil: "",
     noSalesUntil: "",
     spendUntil: "",
     expensiveClickUntil: "",
+    targetCpaUntil: "",
     lastAdded: ""
   };
 }
@@ -2016,12 +2151,14 @@ function writeQuarantineRegistry_(sheet, registryMap, today) {
       e.noSalesUntil,
       e.spendUntil,
       e.expensiveClickUntil,
-      e.lastAdded
+      e.lastAdded,
+      e.targetCpa ? "YES" : "",
+      e.targetCpaUntil
     ]);
   }
 
 
-  var headerWidth = 11;
+  var headerWidth = 13;
   if (sheet.getLastRow() > 1) {
     sheet.getRange(2, 1, sheet.getLastRow() - 1, headerWidth).clearContent();
   }
@@ -2124,7 +2261,8 @@ function buildActiveQuarantineMap_(registryMap, today) {
         reasons: [
           e.noSales && isDateActive_(e.noSalesUntil, today) ? "NO_SALES" : "",
           e.spend && isDateActive_(e.spendUntil, today) ? "SPEND_OVER_MARGIN" : "",
-          e.expensiveClick && isDateActive_(e.expensiveClickUntil, today) ? "EXPENSIVE_CLICK" : ""
+          e.expensiveClick && isDateActive_(e.expensiveClickUntil, today) ? "EXPENSIVE_CLICK" : "",
+          e.targetCpa && isDateActive_(e.targetCpaUntil, today) ? "TARGET_CPA" : ""
         ].filter(function(v) { return v !== ""; }).join(", ")
       };
     }
@@ -2545,6 +2683,7 @@ function formatProductTypesSheet_(sheet, rowCount, header) {
 
 
   var totalCols = header.length;
+  var actualCpaCol = findHeaderIndex_(header, "actual_cpa_30d") + 1;
   var targetCpaCol = findHeaderIndex_(header, "target_cpa") + 1;
   var commentCol = findHeaderIndex_(header, "comment") + 1;
   var benchmarkLabelCol = findProductTypesBenchmarkLabelIndex_(header, null) + 1;
@@ -2561,6 +2700,7 @@ function formatProductTypesSheet_(sheet, rowCount, header) {
     if (firstSeasonCol > 0) sheet.getRange(2, firstSeasonCol, rowCount - 1, 4).setBackground(MANUAL_BACKGROUND);
     if (targetCpaCol > 0) sheet.getRange(2, targetCpaCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
     if (commentCol > 0) sheet.getRange(2, commentCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
+    applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol);
   }
   if (benchmarkLabelCol > 0) sheet.showColumns(benchmarkLabelCol, 5);
   ["path_key", "path_depth", "has_season_rule"].forEach(function(name) {
@@ -2568,6 +2708,24 @@ function formatProductTypesSheet_(sheet, rowCount, header) {
     if (col > 0) sheet.hideColumns(col);
   });
   sheet.setFrozenRows(1);
+}
+
+
+function applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol) {
+  if (rowCount <= 1 || actualCpaCol <= 0 || targetCpaCol <= 0) return;
+  var cpaValues = sheet.getRange(2, actualCpaCol, rowCount - 1, 1).getValues();
+  var targetValues = sheet.getRange(2, targetCpaCol, rowCount - 1, 1).getValues();
+  var backgrounds = [];
+  for (var i = 0; i < cpaValues.length; i++) {
+    var actualCpa = toNumber_(cpaValues[i][0]);
+    var targetCpa = toNumber_(targetValues[i][0]);
+    var bg = "#ffffff";
+    if (targetCpa > 0 && actualCpa > 0) {
+      bg = actualCpa > targetCpa ? BAD_LIGHT_BACKGROUND : GOOD_BACKGROUND;
+    }
+    backgrounds.push([bg]);
+  }
+  sheet.getRange(2, actualCpaCol, rowCount - 1, 1).setBackgrounds(backgrounds);
 }
 
 
@@ -2616,6 +2774,20 @@ function buildProductTypePriorityRulesFromRows_(rows, maxLevels) {
     var depth = getPathDepth_(path, maxLevels);
     if (depth === 0) continue;
     rules.push({ path: path, depth: depth, label: label });
+  }
+  return rules;
+}
+
+
+function buildProductTypeTargetCpaRulesFromRows_(rows, maxLevels) {
+  var rules = [];
+  for (var i = 0; i < rows.length; i++) {
+    var targetCpa = toNumber_(rows[i].targetCpa);
+    if (targetCpa <= 0) continue;
+    var path = normalizePathToFilledLevels_(rows[i].path, maxLevels);
+    var depth = getPathDepth_(path, maxLevels);
+    if (depth === 0) continue;
+    rules.push({ path: path, depth: depth, targetCpa: targetCpa });
   }
   return rules;
 }
@@ -2674,6 +2846,21 @@ function chooseProductTypeBenchmarkLabel_(productTypes, rules, maxLevels) {
 
 function chooseProductTypePriorityLabel_(productTypes, rules, maxLevels) {
   return chooseDeepestProductTypeLabel_(productTypes, rules, maxLevels);
+}
+
+
+function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels) {
+  if (!productTypes || !rules || rules.length === 0) return 0;
+  var best = null;
+  for (var i = 0; i < productTypes.length; i++) {
+    var path = splitProductType_(productTypes[i], maxLevels);
+    for (var r = 0; r < rules.length; r++) {
+      if (pathStartsWith_(path, rules[r].path, maxLevels) && (!best || rules[r].depth > best.depth)) {
+        best = rules[r];
+      }
+    }
+  }
+  return best ? best.targetCpa : 0;
 }
 
 
@@ -2897,12 +3084,16 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
   sheet.getRange(1, 1, 1, colCount).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
   var boolRule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
   if (rowCount > 1) {
-    ["category_winter", "category_spring", "category_summer", "category_autumn", "manual_winter", "manual_spring", "manual_summer", "manual_autumn", "winter", "spring", "summer", "autumn"].forEach(function(name) {
+    ["manual_winter", "manual_spring", "manual_summer", "manual_autumn"].forEach(function(name) {
       var col = findHeaderIndex_(header, name) + 1;
       if (col > 0) sheet.getRange(2, col, rowCount - 1, 1).setDataValidation(boolRule);
     });
     var manualStartCol = findHeaderIndex_(header, "manual_winter") + 1;
     if (manualStartCol > 0) sheet.getRange(2, manualStartCol, rowCount - 1, 4).setBackground(MANUAL_BACKGROUND);
+    var commentCol = findHeaderIndex_(header, "comment") + 1;
+    if (commentCol > 0) sheet.getRange(2, commentCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
+    var categoryStartCol = findHeaderIndex_(header, "category_winter") + 1;
+    if (categoryStartCol > 0) sheet.hideColumns(categoryStartCol, 4);
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
     if (finalStartCol > 0) sheet.hideColumns(finalStartCol, 4);
   }
@@ -3130,7 +3321,19 @@ function appendAttributionFieldsToRow_(row, attributionMap) {
 }
 
 
-function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, settings) {
+function choosePriorityLabel_(product, productTypePriorityRules, clientPriorityMap, settings) {
+  var manualPriority = clientPriorityMap && clientPriorityMap[product.normId] ? safeTrim_(clientPriorityMap[product.normId]) : "";
+  if (manualPriority) return manualPriority;
+
+  var categoryPriority = chooseProductTypePriorityLabel_(product.productTypes, productTypePriorityRules, settings.maxLevels);
+  if (categoryPriority) return categoryPriority;
+
+  if (product.priorityGroup) return safeTrim_(product.priorityGroup);
+  return "other";
+}
+
+
+function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, productTypeTargetCpaRules, clientPriorityMap, settings) {
   var rows = [];
   var today = Utilities.formatDate(new Date(), AdsApp.currentAccount().getTimeZone(), DATE_FORMAT);
   var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings) : {};
@@ -3185,12 +3388,16 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var noSalesStats = quarantineState && quarantineState.noSalesStats ? quarantineState.noSalesStats[p.normId] : null;
     var spendStats = quarantineState && quarantineState.spendStats ? quarantineState.spendStats[p.normId] : null;
     var expensiveClickStats = quarantineState && quarantineState.expensiveClickStats ? quarantineState.expensiveClickStats[p.normId] : null;
+    var targetCpaStats = quarantineState && quarantineState.targetCpaStats ? quarantineState.targetCpaStats[p.normId] : null;
     var expensiveClickCpc = expensiveClickStats && expensiveClickStats.clicks > 0 ? expensiveClickStats.cost / expensiveClickStats.clicks : 0;
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(p.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    var targetCpaActual = targetCpaStats && targetCpaStats.conversions > 0 ? targetCpaStats.cost / targetCpaStats.conversions : 0;
+    var targetCpaExcess = categoryTargetCpa > 0 && targetCpaActual > 0 ? targetCpaActual - categoryTargetCpa : 0;
     var funnel = funnelDecorations[p.normId] || makeEmptyFunnel_(p, settings);
     var currentFunnelStage = funnel.funnelStage || "";
     var productTypeBenchmarkLabel = chooseProductTypeBenchmarkLabel_(p.productTypes, productTypeBenchmarkRules, settings.maxLevels);
     var effectiveBenchmarkGroup = funnel.benchmarkGroup || productTypeBenchmarkLabel || p.benchmarkGroup || settings.defaultBenchmarkGroup;
-    var priorityLabel = chooseProductTypePriorityLabel_(p.productTypes, productTypePriorityRules, settings.maxLevels) || "other";
+    var priorityLabel = choosePriorityLabel_(p, productTypePriorityRules, clientPriorityMap, settings);
     var currentConversions = toNumber_(stats.conversions);
     var currentConversionValue = toNumber_(stats.conversionValue);
     var previousFunnelStage = previous.lastSeenFunnelStage || previous.funnelStage || "";
@@ -3264,7 +3471,12 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
       spendStats ? spendStats.conversionValue || 0 : 0,
       settings.spendToPriceThreshold,
       expensiveClickCpc,
-      settings.expensiveClickThreshold
+      settings.expensiveClickThreshold,
+      targetCpaStats ? targetCpaStats.cost || 0 : 0,
+      targetCpaStats ? targetCpaStats.conversions || 0 : 0,
+      targetCpaActual,
+      categoryTargetCpa,
+      targetCpaExcess
     );
 
 
@@ -3300,6 +3512,10 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
 
 
 function writeProductsSheet_(sheet, rows, settings) {
+  if (!rows || rows.length === 0) {
+    Logger.log("Products write skipped: no rows were built, previous feed rows preserved.");
+    return;
+  }
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var output = [];
   var includePriorityLabel = shouldWriteProductsPriorityLabel_(settings);
@@ -3317,21 +3533,29 @@ function writeProductsSheet_(sheet, rows, settings) {
   }
 
 
-  var lastRowToClear = Math.max(sheet.getLastRow(), output.length + 1);
   var outputColCount = includePriorityLabel ? 5 : 4;
-  if (lastRowToClear > 1) sheet.getRange(2, 1, lastRowToClear - 1, Math.max(5, outputColCount)).clearContent();
 
 
   sheet.getRange(1, 1, 1, 3).setValues([["id", "excluded_destination", "excluded_destination"]]);
   writeProductsFunnelHeader_(sheet, settings);
   writeProductsPriorityHeader_(sheet, settings, includePriorityLabel);
   writeRowsInChunks_(sheet, 2, 1, output, settings.writeChunkSize, "Products");
+  clearProductsTailAfterWrite_(sheet, output.length, Math.max(5, outputColCount));
 
 
   if (settings.enableManagedSheetFormatting) {
     formatProductsSheet_(sheet, output.length + 1, outputColCount);
   }
   if (rows.length > 0) sheet.getRange(2, 1, rows.length, 1).setNumberFormat("@");
+}
+
+
+function clearProductsTailAfterWrite_(sheet, writtenRows, clearWidth) {
+  var firstTailRow = writtenRows + 2;
+  var lastRow = sheet.getLastRow();
+  if (lastRow >= firstTailRow) {
+    sheet.getRange(firstTailRow, 1, lastRow - firstTailRow + 1, clearWidth).clearContent();
+  }
 }
 
 
@@ -3431,7 +3655,12 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
     "spend_rule_conversion_value",
     "spend_to_price_threshold",
     "expensive_click_cpc",
-    "expensive_click_threshold"
+    "expensive_click_threshold",
+    "target_cpa_rule_cost",
+    "target_cpa_rule_conversions",
+    "target_cpa_rule_cpa",
+    "category_target_cpa",
+    "target_cpa_excess"
   );
   header.push(
     "previous_funnel_stage",
@@ -3503,6 +3732,10 @@ function formatProductDiagnosticsSheet_(sheet, rowCount, colCount) {
     setDiagnosticsNumberFormat_(sheet, header, "spend_rule_price", rowCount, currencyFormat);
     setDiagnosticsNumberFormat_(sheet, header, "spend_rule_conversion_value", rowCount, currencyFormat);
     setDiagnosticsNumberFormat_(sheet, header, "expensive_click_cpc", rowCount, currencyFormat);
+    setDiagnosticsNumberFormat_(sheet, header, "target_cpa_rule_cost", rowCount, currencyFormat);
+    setDiagnosticsNumberFormat_(sheet, header, "target_cpa_rule_cpa", rowCount, currencyFormat);
+    setDiagnosticsNumberFormat_(sheet, header, "category_target_cpa", rowCount, currencyFormat);
+    setDiagnosticsNumberFormat_(sheet, header, "target_cpa_excess", rowCount, currencyFormat);
   }
   sheet.setFrozenRows(1);
 }
@@ -4175,7 +4408,7 @@ function getOutputRowIndexes_(maxLevels) {
   var metaCols = 8;
   var levelStart = metaStart + metaCols;
   var statsStart = levelStart + maxLevels;
-  var attributionStart = statsStart + 29 + 14;
+  var attributionStart = statsStart + 34 + 14;
   return {
     id: 0,
     title: 1,
@@ -4446,18 +4679,21 @@ function writeDashboardQuarantineCard_(sheet, diagSheet, settings) {
   var noSalesEnabled = dashboardSettingsBoolFormula_(settingsSheet, "enable_no_sales_rule");
   var spendEnabled = dashboardSettingsBoolFormula_(settingsSheet, "enable_spend_rule");
   var expensiveClickEnabled = dashboardSettingsBoolFormula_(settingsSheet, "enable_expensive_click_rule");
+  var targetCpaEnabled = dashboardSettingsBoolFormula_(settingsSheet, "enable_target_cpa_rule");
   var reasonCol = 'INDEX(' + diagSheet + '!A:ZZ,,MATCH("exclusion_reasons",' + diagSheet + '!1:1,0))';
   var activeCol = 'INDEX(' + diagSheet + '!A:ZZ,,MATCH("quarantine_active",' + diagSheet + '!1:1,0))';
   var activeFormula = '=IF(' + quarantineEnabled + ',COUNTIF(' + activeCol + ',"YES"),0)';
   var noSalesFormula = '=IF(AND(' + quarantineEnabled + ',' + noSalesEnabled + '),COUNTIF(' + reasonCol + ',"*NO_SALES*"),0)';
   var spendFormula = '=IF(AND(' + quarantineEnabled + ',' + spendEnabled + '),COUNTIF(' + reasonCol + ',"*SPEND_OVER_MARGIN*"),0)';
   var clickFormula = '=IF(AND(' + quarantineEnabled + ',' + expensiveClickEnabled + '),COUNTIF(' + reasonCol + ',"*EXPENSIVE_CLICK*"),0)';
+  var targetCpaFormula = '=IF(AND(' + quarantineEnabled + ',' + targetCpaEnabled + '),COUNTIF(' + reasonCol + ',"*TARGET_CPA*"),0)';
   var rows = [
     ["Карантин", "Статус", "Товарів"],
     ["Усього активних", dashboardSettingsStatusFormula_(settingsSheet, "enable_quarantine"), activeFormula],
     ["Кліки без продажів", dashboardSettingsStatusFormula_(settingsSheet, "enable_no_sales_rule"), noSalesFormula],
     ["Витрати > % ціни", dashboardSettingsStatusFormula_(settingsSheet, "enable_spend_rule"), spendFormula],
-    ["Дорогий клік", dashboardSettingsStatusFormula_(settingsSheet, "enable_expensive_click_rule"), clickFormula]
+    ["Дорогий клік", dashboardSettingsStatusFormula_(settingsSheet, "enable_expensive_click_rule"), clickFormula],
+    ["Дорогий CPA", dashboardSettingsStatusFormula_(settingsSheet, "enable_target_cpa_rule"), targetCpaFormula]
   ];
   sheet.getRange(16, 11, rows.length, 3).setValues(rows);
 }
@@ -4717,6 +4953,7 @@ function protectManagedSheets_(ss, settings) {
   openSheetNames[settings.productTypesSheetName] = true;
   openSheetNames[settings.dashboardSheetName] = true;
   openSheetNames[settings.dashboardDataSheetName] = true;
+  openSheetNames[settings.clientPrioritySheetName] = true;
   openSheetNames[settings.settingsSheetName || SETTINGS_SHEET_NAME] = true;
   var ownerEmail = getProtectionOwnerEmail_();
   var sheets = ss.getSheets();
@@ -5069,6 +5306,11 @@ function maxDateStr_(a, b) {
 
 function maxDateStr3_(a, b, c) {
   return maxDateStr_(maxDateStr_(a, b), c);
+}
+
+
+function maxDateStr4_(a, b, c, d) {
+  return maxDateStr_(maxDateStr3_(a, b, c), d);
 }
 
 
