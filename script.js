@@ -116,6 +116,7 @@ function runUnifiedProductControl() {
 
 
   var merchantMap = buildMerchantMap_(merchantProducts);
+  var quarantineLifecycle = readQuarantineLifecycle_(sheets.productDiagnostics);
   var previousProductsMap = {};
   if (settings.enablePreviousStateRead) {
     Logger.log("Reading previous product state...");
@@ -185,11 +186,13 @@ function runUnifiedProductControl() {
   };
   if (settings.enableQuarantine) {
     Logger.log("Updating quarantine...");
-    quarantineState = updateQuarantine_(sheets.quarantineRegistry, sheets.quarantineLog, merchantMap, productTypeTargetCpaRules, settings);
+    quarantineState = updateQuarantine_(sheets.quarantineRegistry, sheets.quarantineLog, merchantMap, productTypeTargetCpaRules, settings, quarantineLifecycle);
     Logger.log("Quarantine updated. Active: " + Object.keys(quarantineState.activeById || {}).length);
   } else {
     Logger.log("Карантин пропущено через enable_quarantine=false.");
+    updateQuarantineExitDates_(quarantineLifecycle, {}, getDateOnly_(new Date()));
   }
+  quarantineState.lifecycle = quarantineLifecycle;
 
 
   Logger.log("Building Products rows...");
@@ -210,6 +213,7 @@ function runUnifiedProductControl() {
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
+  if (!settings.enableProductDiagnostics || Number(settings.productDiagnosticsStartRow) > 1) writeQuarantineLifecycle_(sheets.productDiagnostics, outputRows, settings.maxLevels);
 
   Logger.log("Writing Seasonality sheet...");
   writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
@@ -1833,7 +1837,117 @@ function logThresholdStatsByGroup_(statsByGroup) {
 /* ================= Quarantine ================= */
 
 
-function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTargetCpaRules, settings) {
+function readQuarantineLifecycle_(sheet) {
+  var result = {};
+  if (sheet.getLastRow() < 2) return result;
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var idCol = findHeaderIndex_(header, "id");
+  var exitCol = findHeaderIndex_(header, "last_quarantine_exit_date");
+  var activeCol = findHeaderIndex_(header, "quarantine_active");
+  if (idCol < 0) return result;
+  var count = sheet.getLastRow() - 1;
+  var ids = sheet.getRange(2, idCol + 1, count, 1).getDisplayValues();
+  var dates = exitCol >= 0 ? sheet.getRange(2, exitCol + 1, count, 1).getValues() : [];
+  var active = activeCol >= 0 ? sheet.getRange(2, activeCol + 1, count, 1).getDisplayValues() : [];
+  for (var i = 0; i < count; i++) {
+    var id = normOfferId_(ids[i][0]);
+    if (!id) continue;
+    var date = dates[i] ? parseDateFlexible_(dates[i][0]) : null;
+    var flag = active[i] ? safeTrim_(active[i][0]).toUpperCase() : "";
+    result[id] = { exitDate: date ? formatDate_(date) : "", wasActive: flag === "YES" || flag === "TRUE" };
+  }
+  return result;
+}
+
+function updateQuarantineExitDates_(lifecycle, registry, today) {
+  Object.keys(registry).forEach(function(id) {
+    if (!lifecycle[id]) lifecycle[id] = { exitDate: "", wasActive: true };
+  });
+  Object.keys(lifecycle).forEach(function(id) {
+    var entry = lifecycle[id];
+    if (entry.wasActive && !(registry[id] && isDateActive_(registry[id].activeUntil, today))) {
+      entry.exitDate = formatDate_(today);
+      entry.wasActive = false;
+    }
+  });
+}
+
+function applyQuarantineDateWindows_(stats, merchantMap, lifecycle, days, excludedDays, cache) {
+  var window = getDateRange_(days, excludedDays);
+  var groups = {};
+  Object.keys(lifecycle).forEach(function(id) {
+    var exit = parseDateFlexible_(lifecycle[id].exitDate);
+    if (!exit || !merchantMap[id]) return;
+    var start = formatApiDate_(exit);
+    if (start <= window.start) return;
+    delete stats[id];
+    if (start > window.end) return;
+    if (!groups[start]) groups[start] = [];
+    groups[start].push(merchantMap[id].offerId);
+  });
+  Object.keys(groups).sort().forEach(function(start) {
+    var ids = groups[start].sort();
+    for (var i = 0; i < ids.length; i += 200) {
+      var batch = ids.slice(i, i + 200);
+      var key = JSON.stringify([start, window.end, batch]);
+      if (!Object.prototype.hasOwnProperty.call(cache, key)) cache[key] = getQuarantineBatchStats_(start, window.end, batch);
+      var adjusted = cache[key];
+      Object.keys(adjusted).forEach(function(id) { stats[id] = adjusted[id]; });
+    }
+  });
+}
+
+function getQuarantineBatchStats_(start, end, ids) {
+  var query = "SELECT segments.product_item_id, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.conversions_value FROM shopping_performance_view WHERE segments.date BETWEEN " +
+    JSON.stringify(start) + " AND " + JSON.stringify(end) + " AND segments.product_item_id IN (" + ids.map(function(id) { return JSON.stringify(String(id)); }).join(",") + ")";
+  var iterator = AdsApp.report(query).rows();
+  var result = {};
+  while (iterator.hasNext()) {
+    var row = iterator.next();
+    var offerId = safeTrim_(row["segments.product_item_id"]);
+    var id = normOfferId_(offerId);
+    if (!result[id]) result[id] = { offerIdOut: offerId, impressions: 0, clicks: 0, cost: 0, conversions: 0, conversionValue: 0 };
+    result[id].impressions += toNumber_(row["metrics.impressions"]);
+    result[id].clicks += toNumber_(row["metrics.clicks"]);
+    result[id].cost += toNumber_(row["metrics.cost_micros"]) / 1000000;
+    result[id].conversions += toNumber_(row["metrics.conversions"]);
+    result[id].conversionValue += toNumber_(row["metrics.conversions_value"]);
+  }
+  Logger.log("Карантин: індивідуальний період " + start + " - " + end + ", ID: " + ids.length);
+  return result;
+}
+
+// Мінімальний стан зберігається навіть із вимкненим повним записом діагностики.
+function writeQuarantineLifecycle_(sheet, rows, maxLevels) {
+  var header = sheet.getLastRow() ? sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0] : [];
+  ["id", "quarantine_active", "last_quarantine_exit_date"].forEach(function(name) {
+    if (findHeaderIndex_(header, name) < 0) header.push(name);
+  });
+  if (sheet.getMaxColumns() < header.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), header.length - sheet.getMaxColumns());
+  sheet.getRange(1, 1, 1, header.length).setValues([header]);
+  var idCol = findHeaderIndex_(header, "id") + 1;
+  var existing = sheet.getLastRow() > 1 ? sheet.getRange(2, idCol, sheet.getLastRow() - 1, 1).getDisplayValues() : [];
+  var indexes = {};
+  existing.forEach(function(row, i) { indexes[normOfferId_(row[0])] = i; });
+  var activeCol = findHeaderIndex_(header, "quarantine_active") + 1;
+  var dateCol = findHeaderIndex_(header, "last_quarantine_exit_date") + 1;
+  var actives = existing.length ? sheet.getRange(2, activeCol, existing.length, 1).getValues() : [];
+  var dates = existing.length ? sheet.getRange(2, dateCol, existing.length, 1).getValues() : [];
+  rows.forEach(function(row) {
+    var id = normOfferId_(row[0]);
+    var index = indexes[id];
+    if (index == null) { index = existing.length; indexes[id] = index; existing.push([String(row[0])]); }
+    actives[index] = [row[getOutputRowIndexes_(maxLevels).impressions + 16]];
+    dates[index] = [row[row.length - 1]];
+  });
+  if (!existing.length) return;
+  if (sheet.getMaxRows() < existing.length + 1) sheet.insertRowsAfter(sheet.getMaxRows(), existing.length + 1 - sheet.getMaxRows());
+  sheet.getRange(2, idCol, existing.length, 1).setNumberFormat("@").setValues(existing);
+  sheet.getRange(2, activeCol, existing.length, 1).setValues(actives);
+  sheet.getRange(2, dateCol, existing.length, 1).setNumberFormat("@").setValues(dates);
+}
+
+function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTargetCpaRules, settings, lifecycle) {
   ensureQuarantineRegistryHeader_(registrySheet);
   ensureQuarantineLogHeader_(logSheet);
 
@@ -1843,12 +1957,19 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
   var today = getDateOnly_(new Date());
   var todayStr = formatDate_(today);
   applyEnabledQuarantineRules_(registryMap, settings);
+  lifecycle = lifecycle || {};
+  updateQuarantineExitDates_(lifecycle, registryMap, today);
 
 
   var noSalesStats = settings.enableNoSalesRule ? getAdsStatsMap_(settings.noSalesLookbackDays, settings.excludeLastDays) : {};
   var spendStats = settings.enableSpendRule ? getAdsStatsMap_(settings.spendLookbackDays, settings.excludeLastDays) : {};
   var expensiveClickStats = settings.enableExpensiveClickRule ? getAdsStatsMap_(1, 1) : {};
   var targetCpaStats = settings.enableTargetCpaRule ? getAdsStatsMap_(settings.targetCpaLookbackDays, settings.excludeLastDays) : {};
+  var queryCache = {};
+  if (settings.enableNoSalesRule) applyQuarantineDateWindows_(noSalesStats, merchantMap, lifecycle, settings.noSalesLookbackDays, settings.excludeLastDays, queryCache);
+  if (settings.enableSpendRule) applyQuarantineDateWindows_(spendStats, merchantMap, lifecycle, settings.spendLookbackDays, settings.excludeLastDays, queryCache);
+  if (settings.enableExpensiveClickRule) applyQuarantineDateWindows_(expensiveClickStats, merchantMap, lifecycle, 1, 1, queryCache);
+  if (settings.enableTargetCpaRule) applyQuarantineDateWindows_(targetCpaStats, merchantMap, lifecycle, settings.targetCpaLookbackDays, settings.excludeLastDays, queryCache);
 
 
   var candidates = {};
@@ -3546,6 +3667,8 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
       lastConversionAttributionDate
     );
     appendAttributionFieldsToRow_(row, attributionMap);
+    var lifecycleEntry = quarantineState && quarantineState.lifecycle && quarantineState.lifecycle[p.normId];
+    row.push(lifecycleEntry ? lifecycleEntry.exitDate || "" : "");
 
 
     rows.push(row);
@@ -3728,6 +3851,7 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
     "last_conversion_attribution_date"
   );
   appendAttributionHeaders_(header);
+  header.push("last_quarantine_exit_date");
 
 
   var startDataRow = Math.max(1, Number(settings.productDiagnosticsStartRow) || 1);
