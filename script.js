@@ -2300,16 +2300,16 @@ function writeQuarantineRegistry_(sheet, registryMap, today) {
     rows.push([
       e.offerId,
       e.count,
-      e.noSales ? "YES" : "",
-      e.spend ? "YES" : "",
-      e.expensiveClick ? "YES" : "",
+      e.noSales && isDateActive_(e.noSalesUntil, today) ? "YES" : "",
+      e.spend && isDateActive_(e.spendUntil, today) ? "YES" : "",
+      e.expensiveClick && isDateActive_(e.expensiveClickUntil, today) ? "YES" : "",
       e.problematic ? "YES" : "",
       e.activeUntil,
       e.noSalesUntil,
       e.spendUntil,
       e.expensiveClickUntil,
       e.lastAdded,
-      e.targetCpa ? "YES" : "",
+      e.targetCpa && isDateActive_(e.targetCpaUntil, today) ? "YES" : "",
       e.targetCpaUntil
     ]);
   }
