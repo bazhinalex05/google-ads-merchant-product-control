@@ -134,6 +134,7 @@ function prioritySheet(data) {
       };
     }
   };
+}
 const priorities = prioritySheet([['id', 'priority_group'], ['sku', 'target', 'keep comment']]);
 ctx.ensurePrioritiesSheet_(priorities, { enableManagedSheetFormatting: true });
 assert.equal(priorities.data[0][2], 'comment');
