@@ -159,3 +159,15 @@ const oldHeader = freshHeader.slice(0, 18).concat(['aov', 'conversions_30d', 'sp
 const rebuiltHeader = ctx.buildProductTypesHeader_({ getLastRow: () => 2, getLastColumn: () => oldHeader.length, getRange: () => ({ getValues: () => [oldHeader] }) }, 5, {});
 assert.equal(JSON.stringify(rebuiltHeader), JSON.stringify(freshHeader));
 console.log('PASS: ProductTypes CPA and ROAS first in metrics for new and existing sheets');
+let baseColors;
+ctx.applyProductTypesBaseBackgrounds_({ getRange() { return { setBackgrounds(v) { baseColors = v; } }; } }, 4, 5,
+  ['target_cpa', 'target_roas', 'margin_percent', 'actual_roas_30d'], 3);
+for (const column of [0, 1, 2]) {
+  assert.equal(baseColors[1][column], ctx.MANUAL_BACKGROUND);
+  assert.equal(baseColors[2][column], ctx.MANUAL_BACKGROUND);
+}
+assert.equal(baseColors[0][0], ctx.HEADER_BACKGROUND);
+assert.equal(baseColors[1][3], null);
+assert.equal(baseColors[3][1], null);
+assert.equal(baseColors[1][4], null);
+console.log('PASS: manual target backgrounds stay yellow while stale tail formatting clears');

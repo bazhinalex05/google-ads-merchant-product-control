@@ -2723,7 +2723,7 @@ function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
   }
 
 
-  clearManagedProductTypesSheet_(sheet, output.length, output[0].length);
+  clearManagedProductTypesSheet_(sheet, output.length, output[0].length, header);
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
   formatProductTypesSheet_(sheet, output.length, header, settings);
   if (rows.length > 0) {
@@ -2823,13 +2823,27 @@ function findProductTypesPriorityLabelIndex_(header, settings) {
 }
 
 
-function clearManagedProductTypesSheet_(sheet, rowCount, colCount) {
+function clearManagedProductTypesSheet_(sheet, rowCount, colCount, header) {
   var rowsToClear = Math.max(sheet.getLastRow(), rowCount, 1);
   var colsToClear = Math.max(sheet.getLastColumn(), colCount, 1);
   var range = sheet.getRange(1, 1, rowsToClear, colsToClear);
   range.clearContent();
   range.clearDataValidations();
-  range.setBackground(null).setFontWeight("normal");
+  applyProductTypesBaseBackgrounds_(sheet, rowsToClear, colsToClear, header, rowCount);
+  range.setFontWeight("normal");
+}
+
+function applyProductTypesBaseBackgrounds_(sheet, rowCount, colCount, header, activeRows) {
+  var manual = ["Вмикаємо", "benchmark_label", "benchmark_group", "priority_label", "priority_group", "winter", "spring", "summer", "autumn", "target_cpa", "target_roas", "margin_percent", "comment"];
+  var backgrounds = [];
+  for (var r = 0; r < rowCount; r++) {
+    var colors = [];
+    for (var c = 0; c < colCount; c++) {
+      colors.push(r >= activeRows || c >= header.length ? null : r === 0 ? HEADER_BACKGROUND : manual.indexOf(header[c]) >= 0 ? MANUAL_BACKGROUND : null);
+    }
+    backgrounds.push(colors);
+  }
+  sheet.getRange(1, 1, rowCount, colCount).setBackgrounds(backgrounds);
 }
 
 
@@ -2874,7 +2888,8 @@ function formatProductTypesSheet_(sheet, rowCount, header, settings) {
   var firstSeasonCol = findHeaderIndex_(header, "winter") + 1;
 
 
-  sheet.getRange(1, 1, rowCount, totalCols).setBackground(null).setFontWeight("normal");
+  applyProductTypesBaseBackgrounds_(sheet, rowCount, totalCols, header, rowCount);
+  sheet.getRange(1, 1, rowCount, totalCols).setFontWeight("normal");
   sheet.getRange(1, 1, 1, totalCols).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
   if (rowCount > 1) {
     sheet.getRange(2, 1, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
