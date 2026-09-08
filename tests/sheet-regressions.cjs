@@ -153,3 +153,9 @@ assert.equal(ctx.findExternalProductTypeMatch_('FX123_COPY', external, ['FX'], [
 assert.equal(ctx.findExternalProductTypeMatch_('123_copy_more', external, [], ['_copy']), null);
 assert.equal(ctx.findExternalProductTypeMatch_('FX123', external, ['FX']).matchId, '123');
 console.log('PASS: exact, prefix, suffix, combined matching and end-only suffix removal');
+const freshHeader = ctx.buildProductTypesHeader_({ getLastRow: () => 0 }, 5, {});
+assert.equal(JSON.stringify(freshHeader.slice(18)), JSON.stringify(['actual_cpa_30d', 'actual_roas_30d', 'aov', 'conversions_30d', 'spend_30d', 'conversion_value_30d', 'comment']));
+const oldHeader = freshHeader.slice(0, 18).concat(['aov', 'conversions_30d', 'spend_30d', 'actual_cpa_30d', 'actual_roas_30d', 'conversion_value_30d', 'comment']);
+const rebuiltHeader = ctx.buildProductTypesHeader_({ getLastRow: () => 2, getLastColumn: () => oldHeader.length, getRange: () => ({ getValues: () => [oldHeader] }) }, 5, {});
+assert.equal(JSON.stringify(rebuiltHeader), JSON.stringify(freshHeader));
+console.log('PASS: ProductTypes CPA and ROAS first in metrics for new and existing sheets');

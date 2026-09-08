@@ -2744,11 +2744,11 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
 
 
   var defaultTail = [
+    "actual_cpa_30d",
+    "actual_roas_30d",
     "aov",
     "conversions_30d",
     "spend_30d",
-    "actual_cpa_30d",
-    "actual_roas_30d",
     "conversion_value_30d",
     "comment"
   ];
@@ -2770,8 +2770,8 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
   }
 
 
-  tail = tail.filter(function(name) { return name !== "comment" && name !== "actual_roas_30d"; });
-  tail.splice(tail.indexOf("actual_cpa_30d") + 1, 0, "actual_roas_30d");
+  tail = tail.filter(function(name) { return name !== "comment" && name !== "actual_cpa_30d" && name !== "actual_roas_30d"; });
+  tail.unshift("actual_cpa_30d", "actual_roas_30d");
   return fixed.concat(tail, ["comment"]);
 }
 
