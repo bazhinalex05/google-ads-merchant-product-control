@@ -121,3 +121,27 @@ ctx.SpreadsheetApp.ProtectionType = { SHEET: 'SHEET', RANGE: 'RANGE' };
 ctx.removeProtectionsForSheet_({ getProtections() { return [{ canEdit: () => true, remove() { removed++; } }]; } });
 assert.equal(removed, 2);
 console.log('PASS: diagnostics date placement, header grouping, dashboard roundtrip, protection removal');
+
+function prioritySheet(data) {
+  return { data, colors: [], getLastRow: () => data.length, getLastColumn: () => Math.max(0, ...data.map(r => r.length)), getMaxRows: () => 100,
+    setFrozenRows() {}, insertColumnBefore(c) { data.forEach(r => r.splice(c - 1, 0, '')); },
+    getRange(r, c, h = 1, w = 1) {
+      const sheet = this;
+      return { getValues: () => [data[0] || []],
+        setValues(values) { values.forEach((row, i) => { data[r - 1 + i] ||= []; row.forEach((v, j) => data[r - 1 + i][c - 1 + j] = v); }); return this; },
+        setValue(value) { return this.setValues([[value]]); },
+        setBackground(color) { sheet.colors.push({ r, c, w, color }); return this; }, setFontWeight() { return this; }
+      };
+    }
+  };
+const priorities = prioritySheet([['id', 'priority_group'], ['sku', 'target', 'keep comment']]);
+ctx.ensurePrioritiesSheet_(priorities, { enableManagedSheetFormatting: true });
+assert.equal(priorities.data[0][2], 'comment');
+assert.equal(priorities.data[1][2], 'keep comment');
+ctx.ensurePrioritiesSheet_(priorities, { enableManagedSheetFormatting: true });
+assert.equal(priorities.data[1][2], 'keep comment');
+assert.ok(priorities.colors.some(x => x.r === 2 && x.c === 3 && x.color === ctx.MANUAL_BACKGROUND));
+const newPriorities = prioritySheet([]);
+ctx.ensurePrioritiesSheet_(newPriorities, { enableManagedSheetFormatting: true });
+assert.equal(JSON.stringify(newPriorities.data[0]), JSON.stringify(['id', 'priority_group', 'comment']));
+console.log('PASS: Priorities comment generation, yellow formatting, repeated-run preservation');

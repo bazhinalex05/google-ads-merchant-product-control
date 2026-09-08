@@ -641,7 +641,7 @@ function setSettingsColumnWidths_(sheet) {
 
 
 function ensurePrioritiesSheet_(sheet, settings) {
-  var header = ["id", "priority_group"];
+  var header = ["id", "priority_group", "comment"];
   var firstRow = sheet.getLastRow() >= 1 ? sheet.getRange(1, 1, 1, Math.max(2, sheet.getLastColumn())).getValues()[0] : [];
   var firstCell = safeTrim_(firstRow[0]);
   var secondCell = safeTrim_(firstRow[1]);
@@ -650,10 +650,17 @@ function ensurePrioritiesSheet_(sheet, settings) {
   } else {
     if (findHeaderIndex_(firstRow, "id") < 0) sheet.getRange(1, 1).setValue("id");
     if (findHeaderIndex_(firstRow, "priority_group") < 0) sheet.getRange(1, 2).setValue("priority_group");
+    if (findHeaderIndex_(firstRow, "comment") < 0) {
+      if (safeTrim_(firstRow[2])) sheet.insertColumnBefore(3);
+      sheet.getRange(1, 3).setValue("comment");
+    }
   }
   if (settings.enableManagedSheetFormatting) {
+    var commentColumn = findHeaderIndex_(firstRow, "comment") + 1 || 3;
     sheet.getRange(1, 1, 1, 2).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
+    sheet.getRange(1, commentColumn).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
     sheet.getRange(2, 1, Math.max(1, sheet.getMaxRows() - 1), 2).setBackground(MANUAL_BACKGROUND);
+    sheet.getRange(2, commentColumn, Math.max(1, sheet.getMaxRows() - 1), 1).setBackground(MANUAL_BACKGROUND);
     sheet.setFrozenRows(1);
   }
 }
