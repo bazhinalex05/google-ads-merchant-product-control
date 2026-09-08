@@ -529,7 +529,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 7.4 Перевитрата відносно ціни --", "", ""],
     ["enable_spend_rule", settings.enableSpendRule, "true = перевіряти витрати відносно ціни товару."],
     ["spend_lookback_days", settings.spendLookbackDays, "Період перевірки overspend: витрати за N днів до exclude_last_days."],
-    ["spend_to_price_threshold", settings.spendToPriceThreshold, "0.30 = витрати від 30% ціни товару."],
+    ["spend_to_price_threshold", settings.spendToPriceThreshold, "Вводьте відсоток: 30% = витрати від 30% ціни товару."],
     ["spend_quarantine_days", settings.spendQuarantineDays, "На скільки днів товар піде в карантин через overspend."],
     ["-- 7.5 Дорогий клік --", "", ""],
     ["enable_expensive_click_rule", settings.enableExpensiveClickRule, "Увімкнено = перевіряти середній CPC лише за вчора, незалежно від exclude_last_days."],
@@ -538,7 +538,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 7.6 Продажі з дорогим CPA --", "", ""],
     ["enable_target_cpa_rule", settings.enableTargetCpaRule, "true = ставити в карантин товари з продажами, де CPA вище категорійного target_cpa."],
     ["target_cpa_lookback_days", settings.targetCpaLookbackDays, "Період перевірки CPA карантину: витрати і конверсії за N днів до exclude_last_days."],
-    ["target_cpa_excess_threshold", settings.targetCpaExcessThreshold, "0 = будь-яке перевищення target_cpa; 0.20 = CPA має бути на 20% вище target_cpa."],
+    ["target_cpa_excess_threshold", settings.targetCpaExcessThreshold, "Вводьте відсоток: 20% = CPA перевищує target_cpa більш ніж на 20%; 0% = будь-яке перевищення."],
     ["target_cpa_quarantine_days", settings.targetCpaQuarantineDays, "На скільки днів товар піде в карантин через дорогий CPA."],
     ["-- 8. Службові налаштування скрипта --", "", ""],
     ["enable_dashboard_from_diagnostics", settings.enableDashboardFromDiagnostics, "true = будувати Dashboard з готового ProductDiagnostics без читання Merchant API."],
@@ -594,6 +594,9 @@ function formatSettingsTemplate_(sheet, rows) {
     }
     if (isRequiredSetupSetting_(key)) {
       sheet.getRange(i + 1, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
+    }
+    if (key === "spend_to_price_threshold" || key === "target_cpa_excess_threshold") {
+      sheet.getRange(i + 1, 2).setNumberFormat("0.##%");
     }
   }
 
