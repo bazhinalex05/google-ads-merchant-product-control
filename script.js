@@ -100,6 +100,12 @@ function runUnifiedProductControl() {
   Logger.log("Sheets ready.");
 
 
+  if (settings.resetQuarantine) {
+    resetQuarantineState_(sheets);
+    // Runtime only: keep the user's saved quarantine switches unchanged.
+    settings.enableQuarantine = false;
+  }
+
   if (settings.enableDashboardFromDiagnostics) {
     Logger.log("Dashboard from ProductDiagnostics mode enabled. Merchant API read skipped.");
     runDashboardFromDiagnostics_(ss, sheets, settings);
@@ -314,6 +320,7 @@ function readSettings_(ss) {
     enablePreviousStateRead: true,
     enableSheetProtection: true,
     enableProductsWrite: true,
+    resetQuarantine: false,
     writeChunkSize: 5000,
     productDiagnosticsStartRow: 1,
     dataSourceFilter: "",
@@ -412,6 +419,7 @@ function readSettings_(ss) {
   defaults.enablePreviousStateRead = readSettingBool_(map, "enable_previous_state_read", defaults.enablePreviousStateRead);
   defaults.enableSheetProtection = readSettingBool_(map, "enable_sheet_protection", defaults.enableSheetProtection);
   defaults.enableProductsWrite = readSettingBool_(map, "enable_products_write", defaults.enableProductsWrite);
+  defaults.resetQuarantine = readSettingBool_(map, "reset_quarantine", defaults.resetQuarantine);
   defaults.writeChunkSize = readSettingInt_(map, "write_chunk_size", defaults.writeChunkSize);
   defaults.productDiagnosticsStartRow = readSettingInt_(map, "product_diagnostics_start_row", defaults.productDiagnosticsStartRow);
   defaults.dataSourceFilter = readSettingString_(map, "data_source_filter", defaults.dataSourceFilter);
@@ -547,7 +555,8 @@ function writeSettingsTemplate_(sheet, settings) {
     ["wait_after_gcp_registration_seconds", settings.waitAfterGcpRegistrationSeconds, "Пауза після першої реєстрації GCP project, напр. 300 сек. Не трогать."],
     ["merchant_api_page_size", settings.merchantApiPageSize, "Скільки товарів читати за один запит, напр. 1000. Не трогать."],
     ["merchant_api_retry_count", settings.merchantApiRetryCount, "Скільки разів повторювати тимчасові внутрішні помилки Merchant API."],
-    ["merchant_api_retry_sleep_seconds", settings.merchantApiRetrySleepSeconds, "Базова пауза між повторними запитами Merchant API. Кожна наступна спроба чекає довше."]
+    ["merchant_api_retry_sleep_seconds", settings.merchantApiRetrySleepSeconds, "Базова пауза між повторними запитами Merchant API. Кожна наступна спроба чекає довше."],
+    ["reset_quarantine", settings.resetQuarantine, "УВАГА: true = на кожному запуску видаляти всю історію карантину з QuarantineRegistry, QuarantineLog і карантинні дані ProductDiagnostics. Поки галочка стоїть, нові карантини не призначаються. Цілі, сезони, пріоритети та інші причини виключення зберігаються. Для оновлення виключень у допфіді потрібен звичайний запуск із enable_products_write=true, не режим Dashboard із діагностики. Галочка не знімається автоматично: після тесту зніміть її вручну; історія почнеться заново."]
   ];
 
 
@@ -1858,6 +1867,41 @@ function logThresholdStatsByGroup_(statsByGroup) {
 
 /* ================= Quarantine ================= */
 
+
+function resetQuarantineState_(sheets) {
+  [sheets.quarantineRegistry, sheets.quarantineLog].forEach(function(sheet) {
+    if (sheet.getLastRow() > 1) sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).clearContent();
+  });
+  var sheet = sheets.productDiagnostics;
+  if (sheet.getLastRow() < 2) return;
+  var count = sheet.getLastRow() - 1;
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var fields = ["quarantine_active", "quarantine_release", "quarantine_reasons", "last_quarantine_exit_date",
+    "no_sales_clicks", "no_sales_conversions", "spend_rule_cost", "spend_rule_price", "spend_rule_conversions",
+    "spend_rule_conversion_value", "spend_to_price_threshold", "expensive_click_cpc", "expensive_click_threshold",
+    "target_cpa_rule_cost", "target_cpa_rule_conversions", "target_cpa_rule_cpa", "category_target_cpa", "target_cpa_excess"];
+  fields.forEach(function(name) {
+    var col = findHeaderIndex_(header, name);
+    if (col >= 0) sheet.getRange(2, col + 1, count, 1).clearContent();
+  });
+  // Remove only quarantine exclusions; category and season restrictions still apply.
+  var reasonCol = findHeaderIndex_(header, "exclusion_reasons");
+  if (reasonCol >= 0) {
+    var reasons = sheet.getRange(2, reasonCol + 1, count, 1).getValues();
+    var quarantineReasons = ["NO_SALES", "SPEND_OVER_MARGIN", "EXPENSIVE_CLICK", "TARGET_CPA"];
+    reasons.forEach(function(row, index) {
+      var old = String(row[0] || '').split(/,\s*/).filter(Boolean);
+      var kept = old.filter(function(reason) { return quarantineReasons.indexOf(reason) < 0; });
+      if (old.length === kept.length) return;
+      sheet.getRange(index + 2, reasonCol + 1).setValue(kept.join(", "));
+      if (!kept.length) ["excluded_destination_shopping", "excluded_destination_display"].forEach(function(name) {
+        var col = findHeaderIndex_(header, name);
+        if (col >= 0) sheet.getRange(index + 2, col + 1).clearContent();
+      });
+    });
+  }
+  Logger.log("Історію карантину очищено; нові карантини не призначаються, поки reset_quarantine=true.");
+}
 
 function readQuarantineLifecycle_(sheet) {
   var result = {};
