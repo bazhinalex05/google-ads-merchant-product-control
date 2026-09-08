@@ -5842,9 +5842,9 @@ function referenceDashboardRows_(model) {
   rows.push(['Витрати', model.total.cost, 'Кліки без продажів', referenceDashboardEnabledStatus_(model.quarantine.noSalesEnabled), model.quarantine.noSales, model.stages[1].name, model.stages[1].cost]);
   rows.push(['Конверсії', model.total.conversions, 'Витрати > % ціни', referenceDashboardEnabledStatus_(model.quarantine.spendEnabled), model.quarantine.spend, model.stages[2].name, model.stages[2].cost]);
   rows.push(['CPA', model.total.cpa, 'Дорогий клік', referenceDashboardEnabledStatus_(model.quarantine.expensiveClickEnabled), model.quarantine.expensiveClick, model.stages[3].name, model.stages[3].cost]);
-  rows.push(['ROAS', model.total.roas, 'Нові сьогодні', '', model.quarantine.newToday, model.stages[4].name, model.stages[4].cost]);
-  rows.push(['Цінність конв.', model.total.value, 'Витрати карантину', '', model.quarantine.activeCost, model.stages[5].name, model.stages[5].cost]);
-  rows.push(['', '', 'Продажі з дорогим CPA', referenceDashboardEnabledStatus_(model.quarantine.targetCpaEnabled), model.quarantine.targetCpa, '', '']);
+  rows.push(['ROAS', model.total.roas, 'Продажі з дорогим CPA', referenceDashboardEnabledStatus_(model.quarantine.targetCpaEnabled), model.quarantine.targetCpa, model.stages[4].name, model.stages[4].cost]);
+  rows.push(['Цінність конв.', model.total.value, 'Нові сьогодні', '', model.quarantine.newToday, model.stages[5].name, model.stages[5].cost]);
+  rows.push(['', '', 'Витрати карантину', '', model.quarantine.activeCost, '', '']);
   return rows;
 }
 
@@ -6129,8 +6129,8 @@ function referenceFormatDashboardSheet_(sheet, rowCount) {
   sheet.getRange(24, 1, 1, 7).setBorder(true, null, null, null, null, null, separatorColor, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
   sheet.getRange(24, 2, 8, 1).setBorder(null, null, null, true, null, null, separatorColor, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
   sheet.getRange(24, 5, 8, 1).setBorder(null, null, null, true, null, null, separatorColor, SpreadsheetApp.BorderStyle.SOLID_MEDIUM);
-  sheet.getRange(25, 5, 6, 1).setNumberFormat('0');
-  sheet.getRange(30, 5, 1, 1).setNumberFormat(currencyNumberFormat_(getAccountCurrencyCode_()));
+  sheet.getRange(25, 5, 7, 1).setNumberFormat('0');
+  sheet.getRange(31, 5, 1, 1).setNumberFormat(currencyNumberFormat_(getAccountCurrencyCode_()));
   sheet.getRange(25, 7, 6, 1).setNumberFormat(currencyNumberFormat_(getAccountCurrencyCode_()));
   sheet.getRange(2, 2, 11, 4).setNumberFormat('0.##');
   sheet.getRange(2, 6, 11, 2).setNumberFormat(currencyNumberFormat_(getAccountCurrencyCode_()));

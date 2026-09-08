@@ -98,11 +98,14 @@ ctx.writeReferenceDashboard_(dashboard, model);
 assert.equal(dashboard.charts.length, 4);
 assert.equal(dashboard.cell(2, 1).style.setHorizontalAlignment, 'left', 'title starts inside the sheet');
 assert.deepEqual(dashboard.charts.map(c => c.position[2]), [0, 287, 574, 861]);
-assert.equal(dashboard.cell(31, 3).value, 'Продажі з дорогим CPA');
+assert.equal(dashboard.cell(29, 3).value, 'Продажі з дорогим CPA');
+assert.equal(dashboard.cell(30, 3).value, 'Нові сьогодні');
+assert.equal(dashboard.cell(31, 3).value, 'Витрати карантину');
 assert.equal(dashboard.cell(31, 1).style.setBackground, '#eef4ff');
 assert.equal(dashboard.cell(31, 7).style.setBackground, '#eef4ff');
 assert.equal(dashboard.cell(24, 1).style.setBackground, '#4a86e8');
-assert.match(dashboard.cell(30, 5).style.setNumberFormat, /USD/);
+assert.match(dashboard.cell(31, 5).style.setNumberFormat, /USD/);
+assert.equal(dashboard.cell(30, 5).style.setNumberFormat, '0');
 dashboard.cell(1, 2).value = false;
 dashboard.cell(5, 1).style.setBackground = 'custom';
 ctx.writeReferenceDashboard_(dashboard, ctx.buildReferenceDashboardModel_([a], settings, state));
@@ -153,7 +156,7 @@ for (const enableDashboard of [false, true]) {
     ctx.getDashboardPeriodStatsMap_ = () => { throw new Error('No obsolete period queries'); };
     vm.runInContext(dashboardPass, ctx);
     assert.equal(ctx.sheets.dashboard.charts.length, enableDashboard ? 4 : 0);
-    if (enableDashboard) assert.equal(ctx.sheets.dashboard.cell(31, 5).value, 1);
+    if (enableDashboard) assert.equal(ctx.sheets.dashboard.cell(29, 5).value, 1);
     if (enableDashboardData) assert.equal(ctx.sheets.dashboardData.cell(22, 8).value, 1);
   }
 }
