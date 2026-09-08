@@ -138,9 +138,9 @@ function runUnifiedProductControl() {
   var productTypeSeasonalityRules = [];
   var productTypeRows = [];
   var stats30Map = null;
+  var manualStateMap = readProductTypeManualStateMap_(sheets.productTypes, settings.maxLevels, settings);
   if (settings.enableProductTypeFilter || settings.enableSeasonalityFilter || settings.enableTargetCpaRule) {
     Logger.log("ProductType filter, Seasonality or target CPA quarantine enabled. Reading ProductTypes and 30d stats...");
-    var manualStateMap = readProductTypeManualStateMap_(sheets.productTypes, settings.maxLevels, settings);
     stats30Map = getAdsStatsMap_(30, 0);
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, []);
     var productTypeStatsMap = buildProductTypeStatsMap_(merchantProducts, stats30Map, settings.maxLevels);
@@ -155,7 +155,10 @@ function runUnifiedProductControl() {
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, productTypeBenchmarkRules);
     Logger.log("ProductType rows ready: " + productTypeRows.length);
   } else {
-    Logger.log("ProductTypes пропущено: фільтр категорій, сезонність і target CPA карантин вимкнені.");
+    productTypeRows = buildProductTypeTreeRows_(merchantProducts, manualStateMap, {}, settings.maxLevels);
+    productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
+    productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
+    Logger.log("Прочитано категорійні benchmark і priority; статистика та перезапис ProductTypes пропущені.");
   }
 
 
