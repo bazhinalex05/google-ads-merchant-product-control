@@ -22,7 +22,17 @@ Google Ads Script для керування товарами інтернет-м
 
 ## Перевірки й обмеження
 
-Локальні перевірки: `node tests/sheet-regressions.cjs` та `node tests/quarantine-lifecycle.cjs`.
+Локальні перевірки:
+
+```text
+node tests/sheet-regressions.cjs
+node tests/quarantine-lifecycle.cjs
+node tests/funnel-catalog-scope.cjs
+node tests/quarantine-counter.cjs
+node tests/category-label-independence.cjs
+node tests/target-cpa-fallback.cjs
+node tests/quarantine-registry-reasons.cjs
+```
 
 Вони не замінюють запуск у Google Ads. Перевірку фактичного виходу товару з карантину на бойовому проєкті відкладено; майбутнє оновлення вигляду дашбордів не входить у поточну реалізацію.
 

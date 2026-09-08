@@ -138,9 +138,9 @@ function runUnifiedProductControl() {
   var productTypeSeasonalityRules = [];
   var productTypeRows = [];
   var stats30Map = null;
+  var manualStateMap = readProductTypeManualStateMap_(sheets.productTypes, settings.maxLevels, settings);
   if (settings.enableProductTypeFilter || settings.enableSeasonalityFilter || settings.enableTargetCpaRule) {
     Logger.log("ProductType filter, Seasonality or target CPA quarantine enabled. Reading ProductTypes and 30d stats...");
-    var manualStateMap = readProductTypeManualStateMap_(sheets.productTypes, settings.maxLevels, settings);
     stats30Map = getAdsStatsMap_(30, 0);
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, []);
     var productTypeStatsMap = buildProductTypeStatsMap_(merchantProducts, stats30Map, settings.maxLevels);
@@ -155,7 +155,10 @@ function runUnifiedProductControl() {
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, productTypeBenchmarkRules);
     Logger.log("ProductType rows ready: " + productTypeRows.length);
   } else {
-    Logger.log("ProductTypes пропущено: фільтр категорій, сезонність і target CPA карантин вимкнені.");
+    productTypeRows = buildProductTypeTreeRows_(merchantProducts, manualStateMap, {}, settings.maxLevels);
+    productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
+    productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
+    Logger.log("Прочитано категорійні benchmark і priority; статистика та перезапис ProductTypes пропущені.");
   }
 
 
@@ -1721,10 +1724,11 @@ function enrichStatsWithMerchantData_(statsMap, merchantMap, settings, productTy
 }
 
 
-function calculateFunnelRows_(statsMap, settings) {
+function calculateFunnelRows_(statsMap, settings, merchantMap) {
   var noSalesByGroup = {};
   for (var normId in statsMap) {
     if (!statsMap.hasOwnProperty(normId)) continue;
+    if (!Object.prototype.hasOwnProperty.call(merchantMap, normId)) continue;
     var product = statsMap[normId];
     if (product.conversions > 0) continue;
 
@@ -1741,6 +1745,7 @@ function calculateFunnelRows_(statsMap, settings) {
 
   for (var key in statsMap) {
     if (!statsMap.hasOwnProperty(key)) continue;
+    if (!Object.prototype.hasOwnProperty.call(merchantMap, key)) continue;
 
 
     var item = statsMap[key];
@@ -2033,7 +2038,8 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
 
 
     if (!wasActive) {
-      entry.count += 1;
+      var historyEntry = historyMap[normId];
+      entry.count = Math.max(toNumber_(entry.count), historyEntry ? toNumber_(historyEntry.count) : 0) + 1;
       entry.lastAdded = todayStr;
       upsertQuarantineHistory_(historyMap, candidate.offerId, entry.count, todayStr);
 
@@ -2146,7 +2152,7 @@ function collectTargetCpaCandidates_(out, statsMap, merchantMap, productTypeTarg
     if (!statsMap.hasOwnProperty(normId)) continue;
     var merchantProduct = merchantMap[normId];
     if (!merchantProduct) continue;
-    var categoryTargetCpa = chooseProductTypeTargetCpa_(merchantProduct.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(merchantProduct.productTypes, productTypeTargetCpaRules, settings.maxLevels, settings.defaultTargetCpa);
     if (categoryTargetCpa <= 0) continue;
     var s = statsMap[normId];
     if (toNumber_(s.conversions) <= 0) continue;
@@ -2294,16 +2300,16 @@ function writeQuarantineRegistry_(sheet, registryMap, today) {
     rows.push([
       e.offerId,
       e.count,
-      e.noSales ? "YES" : "",
-      e.spend ? "YES" : "",
-      e.expensiveClick ? "YES" : "",
+      e.noSales && isDateActive_(e.noSalesUntil, today) ? "YES" : "",
+      e.spend && isDateActive_(e.spendUntil, today) ? "YES" : "",
+      e.expensiveClick && isDateActive_(e.expensiveClickUntil, today) ? "YES" : "",
       e.problematic ? "YES" : "",
       e.activeUntil,
       e.noSalesUntil,
       e.spendUntil,
       e.expensiveClickUntil,
       e.lastAdded,
-      e.targetCpa ? "YES" : "",
+      e.targetCpa && isDateActive_(e.targetCpaUntil, today) ? "YES" : "",
       e.targetCpaUntil
     ]);
   }
@@ -3064,8 +3070,9 @@ function chooseProductTypePriorityLabel_(productTypes, rules, maxLevels) {
 }
 
 
-function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels) {
-  if (!productTypes || !rules || rules.length === 0) return 0;
+function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels, defaultTargetCpa) {
+  var fallback = Math.max(0, toNumber_(defaultTargetCpa));
+  if (!productTypes || !rules || rules.length === 0) return fallback;
   var best = null;
   for (var i = 0; i < productTypes.length; i++) {
     var path = splitProductType_(productTypes[i], maxLevels);
@@ -3075,7 +3082,7 @@ function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels) {
       }
     }
   }
-  return best ? best.targetCpa : 0;
+  return best && best.targetCpa > 0 ? best.targetCpa : fallback;
 }
 
 
@@ -3548,7 +3555,7 @@ function choosePriorityLabel_(product, productTypePriorityRules, priorityMap, se
 function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, productTypeTargetCpaRules, priorityMap, settings) {
   var rows = [];
   var today = Utilities.formatDate(new Date(), AdsApp.currentAccount().getTimeZone(), DATE_FORMAT);
-  var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings) : {};
+  var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings, merchantMap) : {};
   var changed = 0;
   var categoryExcluded = 0;
   var seasonalityExcluded = 0;
@@ -3602,7 +3609,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var expensiveClickStats = quarantineState && quarantineState.expensiveClickStats ? quarantineState.expensiveClickStats[p.normId] : null;
     var targetCpaStats = quarantineState && quarantineState.targetCpaStats ? quarantineState.targetCpaStats[p.normId] : null;
     var expensiveClickCpc = expensiveClickStats && expensiveClickStats.clicks > 0 ? expensiveClickStats.cost / expensiveClickStats.clicks : 0;
-    var categoryTargetCpa = chooseProductTypeTargetCpa_(p.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(p.productTypes, productTypeTargetCpaRules, settings.maxLevels, settings.defaultTargetCpa);
     var targetCpaActual = targetCpaStats && targetCpaStats.conversions > 0 ? targetCpaStats.cost / targetCpaStats.conversions : 0;
     var targetCpaExcess = categoryTargetCpa > 0 && targetCpaActual > 0 ? targetCpaActual - categoryTargetCpa : 0;
     var funnel = funnelDecorations[p.normId] || makeEmptyFunnel_(p, settings);
