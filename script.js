@@ -424,7 +424,6 @@ function readSettings_(ss) {
   defaults.dataSourceFilter = readSettingString_(map, "data_source_filter", defaults.dataSourceFilter);
   defaults.feedLabelFilter = readSettingString_(map, "feed_label_filter", defaults.feedLabelFilter);
   defaults.languageFilter = readSettingString_(map, "language_filter", defaults.languageFilter);
-  defaults.maxLevels = readSettingInt_(map, "max_product_type_levels", defaults.maxLevels);
   defaults.enableProductTypeCustomLabelSource = readSettingBool_(map, "enable_product_type_custom_label_source", defaults.enableProductTypeCustomLabelSource);
   defaults.productTypeCustomLabelField = readSettingString_(map, "product_type_custom_label_field", defaults.productTypeCustomLabelField);
   defaults.productTypeFeedUrl = readSettingString_(map, "product_type_feed_url", defaults.productTypeFeedUrl);
@@ -495,7 +494,6 @@ function writeSettingsTemplate_(sheet, settings) {
     ["active_season_summer", settings.activeSeasonSummer, "Увімкніть, щоб дозволити товари з позначеною літом, зокрема примусово продовжити їх сезон незалежно від календаря. Діє лише з увімкненим фільтром сезонності; інші обмеження залишаються."],
     ["active_season_autumn", settings.activeSeasonAutumn, "Увімкніть, щоб дозволити товари з позначеною осінню, зокрема примусово продовжити їх сезон незалежно від календаря. Діє лише з увімкненим фільтром сезонності; інші обмеження залишаються."],
     ["-- 5. Категорії товарів --", "", ""],
-    ["max_product_type_levels", settings.maxLevels, "Скільки рівнів product_type писати в окремі колонки."],
     ["enable_product_type_custom_label_source", settings.enableProductTypeCustomLabelSource, "true = брати дерево product_type з custom label, вказаного нижче; якщо там порожньо, буде fallback на штатний product_type."],
     ["product_type_custom_label_field", settings.productTypeCustomLabelField, "custom_label_0..custom_label_4, де лежить повна категорійна цепочка, наприклад Auto > Dodge > Dodge Dart."],
     ["product_type_feed_url", settings.productTypeFeedUrl, "Порожньо = брати product_type з Merchant API. Якщо заповнено, ProductTypes бере категорії тільки з цього XML: g:id + g:product_type. Кілька URL можна писати через кому або з нового рядка."],
@@ -755,9 +753,6 @@ function validateRuntimeSettings_(settings) {
   }
 
 
-  if (settings.maxLevels < 1 || settings.maxLevels > 10) {
-    throw new Error("max_product_type_levels має бути від 1 до 10.");
-  }
 
 
   if (settings.merchantApiPageSize < 1 || settings.merchantApiPageSize > 1000) {
