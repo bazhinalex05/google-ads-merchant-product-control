@@ -6101,7 +6101,7 @@ function referenceFormatDashboardSheet_(sheet, rowCount) {
     .setHorizontalAlignment('center');
   sheet.getRange(2, 1, rowCount, 7).setBorder(false, false, false, false, false, false);
   sheet.getRange(2, 1, rowCount, 7).setBackground('#ffffff').setFontColor('#000000').setFontWeight('normal');
-  sheet.getRange(2, 1, 1, 7).setFontSize(13).setFontWeight('bold');
+  sheet.getRange(2, 1, 1, 7).setFontSize(13).setFontWeight('bold').setHorizontalAlignment('left');
   var headerTitles = {
     'Конверсійні': true,
     'Клікабельні': true,

@@ -96,6 +96,7 @@ class Sheet {
 const dashboard = new Sheet();
 ctx.writeReferenceDashboard_(dashboard, model);
 assert.equal(dashboard.charts.length, 4);
+assert.equal(dashboard.cell(2, 1).style.setHorizontalAlignment, 'left', 'title starts inside the sheet');
 assert.deepEqual(dashboard.charts.map(c => c.position[2]), [0, 287, 574, 861]);
 assert.equal(dashboard.cell(31, 3).value, 'Продажі з дорогим CPA');
 assert.equal(dashboard.cell(31, 1).style.setBackground, '#eef4ff');
