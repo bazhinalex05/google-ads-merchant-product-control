@@ -537,7 +537,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["target_cpa_excess_threshold", settings.targetCpaExcessThreshold, "Вводьте відсоток: 20% = CPA перевищує target_cpa більш ніж на 20%; 0% = будь-яке перевищення."],
     ["target_cpa_quarantine_days", settings.targetCpaQuarantineDays, "На скільки днів товар піде в карантин через дорогий CPA."],
     ["-- 8. Службові налаштування скрипта --", "", ""],
-    ["enable_product_diagnostics", settings.enableProductDiagnostics, "false = не записувати ProductDiagnostics для дуже великих каталогів."],
+    ["enable_product_diagnostics", settings.enableProductDiagnostics, "Вимкнено = повна діагностика не оновлюється. У ProductDiagnostics усе одно записуються три поля: ID товару, чи перебуває він у карантині, дата останнього виходу з карантину. Вони зберігаються тут, щоб наступний запуск не враховував витрати до виходу з карантину."],
     ["enable_dashboard_data", settings.enableDashboardData, "false = не записувати DashboardData для дуже великих каталогів."],
     ["enable_dashboard", settings.enableDashboard, "false = не будувати Dashboard і графіки для дуже великих каталогів."],
     ["dashboard_sheet_name", settings.dashboardSheetName, "Назва візуального листа Dashboard. Скрипт його не перезаписує."],
