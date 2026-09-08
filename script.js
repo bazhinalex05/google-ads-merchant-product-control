@@ -1721,10 +1721,11 @@ function enrichStatsWithMerchantData_(statsMap, merchantMap, settings, productTy
 }
 
 
-function calculateFunnelRows_(statsMap, settings) {
+function calculateFunnelRows_(statsMap, settings, merchantMap) {
   var noSalesByGroup = {};
   for (var normId in statsMap) {
     if (!statsMap.hasOwnProperty(normId)) continue;
+    if (!Object.prototype.hasOwnProperty.call(merchantMap, normId)) continue;
     var product = statsMap[normId];
     if (product.conversions > 0) continue;
 
@@ -1741,6 +1742,7 @@ function calculateFunnelRows_(statsMap, settings) {
 
   for (var key in statsMap) {
     if (!statsMap.hasOwnProperty(key)) continue;
+    if (!Object.prototype.hasOwnProperty.call(merchantMap, key)) continue;
 
 
     var item = statsMap[key];
@@ -3548,7 +3550,7 @@ function choosePriorityLabel_(product, productTypePriorityRules, priorityMap, se
 function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, productTypeRules, funnelStatsMap, activeQuarantineMap, quarantineState, seasonalityMap, productTypeSeasonalityRules, productTypeBenchmarkRules, productTypePriorityRules, productTypeTargetCpaRules, priorityMap, settings) {
   var rows = [];
   var today = Utilities.formatDate(new Date(), AdsApp.currentAccount().getTimeZone(), DATE_FORMAT);
-  var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings) : {};
+  var funnelDecorations = settings.enableFunnelBuilder ? calculateFunnelRows_(funnelStatsMap, settings, merchantMap) : {};
   var changed = 0;
   var categoryExcluded = 0;
   var seasonalityExcluded = 0;
