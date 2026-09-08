@@ -96,6 +96,7 @@ function runUnifiedProductControl() {
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
   ensurePrioritiesSheet_(sheets.priorities, settings);
+  removeProtectionsForSheet_(sheets.seasonality);
   Logger.log("Sheets ready.");
 
 
@@ -3273,11 +3274,7 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
     if (finalStartCol > 0) sheet.hideColumns(finalStartCol, 4);
   }
-  if (!settings || settings.enableSheetProtection) {
-    applySeasonalityProtections_(sheet, header);
-  } else {
-    removeProtectionsForSheet_(sheet);
-  }
+  removeProtectionsForSheet_(sheet);
   sheet.setFrozenRows(1);
 }
 
@@ -3860,6 +3857,19 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
   var startDataRow = Math.max(1, Number(settings.productDiagnosticsStartRow) || 1);
   var startIndex = startDataRow - 1;
   var rowsToWrite = rows.slice(startIndex);
+  var sourceHeader = header.slice();
+  if (startDataRow <= 1) {
+    header.splice(header.indexOf("quarantine_reasons") + 1, 0, header.pop());
+  } else {
+    header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    var exitColumn = header.indexOf("last_quarantine_exit_date");
+    var destinationColumn = header.indexOf("quarantine_reasons") + 1;
+    if (exitColumn > destinationColumn && destinationColumn > 0) {
+      sheet.moveColumns(sheet.getRange(1, exitColumn + 1, sheet.getMaxRows(), 1), destinationColumn + 1);
+      header.splice(destinationColumn, 0, header.splice(exitColumn, 1)[0]);
+    }
+  }
+  rowsToWrite = remapDiagnosticsRows_(rowsToWrite, sourceHeader, header);
 
 
   if (startDataRow <= 1) {
@@ -3891,10 +3901,25 @@ function writeRowsInChunks_(sheet, startRow, startCol, rows, chunkSize, label) {
 }
 
 
+function remapDiagnosticsRows_(rows, sourceHeader, targetHeader) {
+  var indexes = targetHeader.map(function(name) { return sourceHeader.indexOf(name); });
+  return rows.map(function(row) { return indexes.map(function(index) { return index < 0 || row[index] == null ? "" : row[index]; }); });
+}
+
+function formatDiagnosticsHeaderGroups_(sheet, header) {
+  var starts = ["id", "product_type_full_path", "impressions", "sales_status", "benchmark_group", "quarantine_active", "category_allowed", "no_sales_clicks", "spend_rule_cost", "expensive_click_cpc", "target_cpa_rule_cost", "previous_funnel_stage", "attr_conversions_stage_1"];
+  var group = -1;
+  for (var i = 0; i < header.length; i++) {
+    if (starts.indexOf(header[i]) >= 0) group++;
+    sheet.getRange(1, i + 1).setBackground(group % 2 === 0 ? "#cfe2f3" : "#fff2cc");
+  }
+}
+
 function formatProductDiagnosticsSheet_(sheet, rowCount, colCount) {
   if (rowCount <= 0 || colCount <= 0) return;
   sheet.getRange(1, 1, rowCount, colCount).setBackground(null).setFontWeight("normal");
   sheet.getRange(1, 1, 1, colCount).setBackground(HEADER_BACKGROUND).setFontWeight("bold");
+  formatDiagnosticsHeaderGroups_(sheet, sheet.getRange(1, 1, 1, colCount).getValues()[0]);
   if (rowCount > 1) {
     var header = sheet.getRange(1, 1, 1, colCount).getValues()[0];
     var currencyFormat = currencyNumberFormat_(getAccountCurrencyCode_());
@@ -4025,6 +4050,13 @@ function readDashboardSourceFromDiagnostics_(sheet, settings) {
 
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  var diagnosticsHeader = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var exitIndex = diagnosticsHeader.indexOf("last_quarantine_exit_date");
+  if (exitIndex >= 0 && exitIndex !== diagnosticsHeader.length - 1) {
+    var internalHeader = diagnosticsHeader.slice();
+    internalHeader.push(internalHeader.splice(exitIndex, 1)[0]);
+    values = remapDiagnosticsRows_(values, diagnosticsHeader, internalHeader);
+  }
   var outputRows = [];
   var merchantProducts = [];
   for (var i = 0; i < values.length; i++) {
@@ -5160,6 +5192,7 @@ function protectManagedSheets_(ss, settings) {
   openSheetNames[settings.dashboardSheetName] = true;
   openSheetNames[settings.dashboardDataSheetName] = true;
   openSheetNames[settings.prioritySheetName] = true;
+  openSheetNames[settings.seasonalitySheetName] = true;
   openSheetNames[settings.settingsSheetName || SETTINGS_SHEET_NAME] = true;
   var ownerEmail = getProtectionOwnerEmail_();
   var sheets = ss.getSheets();

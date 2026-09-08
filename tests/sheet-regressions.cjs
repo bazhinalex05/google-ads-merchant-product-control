@@ -82,3 +82,42 @@ assert.equal(formats.spend_to_price_threshold, '0.00%');
 assert.equal(formats.cost, formats.attr_conversion_value_stage_1);
 assert.notEqual(formats.cost, formats.conversions);
 console.log('PASS: category totals, manual target persistence, formula fallback, Seasonality mapping, diagnostics formats');
+
+const source = ['id', 'quarantine_reasons', 'category_allowed', 'attr_conversions_stage_1', 'last_quarantine_exit_date'];
+const display = ['id', 'quarantine_reasons', 'last_quarantine_exit_date', 'category_allowed', 'attr_conversions_stage_1'];
+const original = [['sku', 'TARGET_CPA', 'YES', 7, '08.09.2026']];
+const moved = ctx.remapDiagnosticsRows_(original, source, display);
+assert.equal(moved[0][2], '08.09.2026');
+assert.equal(moved[0][4], 7);
+assert.equal(JSON.stringify(ctx.remapDiagnosticsRows_(moved, display, source)), JSON.stringify(original));
+assert.equal(original[0][4], '08.09.2026');
+const colors = [];
+ctx.formatDiagnosticsHeaderGroups_({ getRange(r, c) { return { setBackground(color) { colors[c - 1] = color; } }; } },
+  ['id', 'title', 'product_type_full_path', 'product_type_l1', 'impressions', 'roas', 'sales_status', 'funnel_stage', 'benchmark_group', 'quarantine_active', 'quarantine_reasons', 'last_quarantine_exit_date', 'category_allowed']);
+assert.equal(colors[0], colors[1]);
+assert.notEqual(colors[1], colors[2]);
+assert.equal(colors[0], colors[4]);
+assert.equal(colors[9], colors[11]);
+assert.notEqual(colors[11], colors[12]);
+let diagnosticsWrites = [];
+const diagnosticsSheet = {
+  clearContents() {},
+  getRange(r, c) { return { setValues(v) { diagnosticsWrites.push({ r, v }); }, setNumberFormat() {} }; }
+};
+const internalRow = Array.from({ length: 77 }, (_, i) => i);
+internalRow[76] = '08.09.2026';
+ctx.writeProductDiagnosticsSheet_(diagnosticsSheet, [internalRow], { maxLevels: 5, productDiagnosticsStartRow: 1, writeChunkSize: 100, enableManagedSheetFormatting: false });
+const writtenHeader = diagnosticsWrites[0].v[0];
+const writtenRow = diagnosticsWrites[1].v[0];
+assert.equal(writtenHeader.indexOf('last_quarantine_exit_date'), writtenHeader.indexOf('quarantine_reasons') + 1);
+assert.equal(writtenRow[writtenHeader.indexOf('last_quarantine_exit_date')], '08.09.2026');
+assert.equal(writtenRow.length, writtenHeader.length);
+const readBack = ctx.readDashboardSourceFromDiagnostics_({ getLastRow: () => 2, getLastColumn: () => writtenHeader.length,
+  getRange(r) { return { getValues: () => r === 1 ? [writtenHeader] : [writtenRow] }; }
+}, { maxLevels: 5 });
+assert.equal(JSON.stringify(readBack.outputRows[0]), JSON.stringify(internalRow));
+let removed = 0;
+ctx.SpreadsheetApp.ProtectionType = { SHEET: 'SHEET', RANGE: 'RANGE' };
+ctx.removeProtectionsForSheet_({ getProtections() { return [{ canEdit: () => true, remove() { removed++; } }]; } });
+assert.equal(removed, 2);
+console.log('PASS: diagnostics date placement, header grouping, dashboard roundtrip, protection removal');
