@@ -2152,7 +2152,7 @@ function collectTargetCpaCandidates_(out, statsMap, merchantMap, productTypeTarg
     if (!statsMap.hasOwnProperty(normId)) continue;
     var merchantProduct = merchantMap[normId];
     if (!merchantProduct) continue;
-    var categoryTargetCpa = chooseProductTypeTargetCpa_(merchantProduct.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(merchantProduct.productTypes, productTypeTargetCpaRules, settings.maxLevels, settings.defaultTargetCpa);
     if (categoryTargetCpa <= 0) continue;
     var s = statsMap[normId];
     if (toNumber_(s.conversions) <= 0) continue;
@@ -3070,8 +3070,9 @@ function chooseProductTypePriorityLabel_(productTypes, rules, maxLevels) {
 }
 
 
-function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels) {
-  if (!productTypes || !rules || rules.length === 0) return 0;
+function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels, defaultTargetCpa) {
+  var fallback = Math.max(0, toNumber_(defaultTargetCpa));
+  if (!productTypes || !rules || rules.length === 0) return fallback;
   var best = null;
   for (var i = 0; i < productTypes.length; i++) {
     var path = splitProductType_(productTypes[i], maxLevels);
@@ -3081,7 +3082,7 @@ function chooseProductTypeTargetCpa_(productTypes, rules, maxLevels) {
       }
     }
   }
-  return best ? best.targetCpa : 0;
+  return best && best.targetCpa > 0 ? best.targetCpa : fallback;
 }
 
 
@@ -3608,7 +3609,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var expensiveClickStats = quarantineState && quarantineState.expensiveClickStats ? quarantineState.expensiveClickStats[p.normId] : null;
     var targetCpaStats = quarantineState && quarantineState.targetCpaStats ? quarantineState.targetCpaStats[p.normId] : null;
     var expensiveClickCpc = expensiveClickStats && expensiveClickStats.clicks > 0 ? expensiveClickStats.cost / expensiveClickStats.clicks : 0;
-    var categoryTargetCpa = chooseProductTypeTargetCpa_(p.productTypes, productTypeTargetCpaRules, settings.maxLevels);
+    var categoryTargetCpa = chooseProductTypeTargetCpa_(p.productTypes, productTypeTargetCpaRules, settings.maxLevels, settings.defaultTargetCpa);
     var targetCpaActual = targetCpaStats && targetCpaStats.conversions > 0 ? targetCpaStats.cost / targetCpaStats.conversions : 0;
     var targetCpaExcess = categoryTargetCpa > 0 && targetCpaActual > 0 ? targetCpaActual - categoryTargetCpa : 0;
     var funnel = funnelDecorations[p.normId] || makeEmptyFunnel_(p, settings);
