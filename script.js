@@ -5707,33 +5707,16 @@ function buildReferenceDashboardModel_(outputRows, settings, quarantineState) {
   };
 }
 
-function referenceActiveQuarantineCosts_(rows, settings, state) {
+function referenceActiveQuarantineCosts_(rows, settings) {
   var costs = {};
   if (!settings.enableQuarantine) return costs;
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var activeRows = rows.filter(function(row) { return row[idx.impressions + 16] === 'YES'; });
   if (!activeRows.length) return costs;
-  // The CPA diagnostic cost already uses this exact window, including the last exit cutoff.
-  if (settings.enableTargetCpaRule && Number(settings.targetCpaLookbackDays) === 30) {
-    activeRows.forEach(function(row) { costs[normOfferId_(row[idx.id])] = toNumber_(row[idx.impressions + 29]); });
-    return costs;
-  }
-  var stats = null;
-  if (state && settings.enableNoSalesRule && Number(settings.noSalesLookbackDays) === 30) stats = state.noSalesStats;
-  if (!stats && state && settings.enableSpendRule && Number(settings.spendLookbackDays) === 30) stats = state.spendStats;
-  if (!stats) {
-    stats = getAdsStatsMap_(30, settings.excludeLastDays);
-    var merchantMap = {}, lifecycle = {};
-    activeRows.forEach(function(row) {
-      var id = normOfferId_(row[idx.id]);
-      merchantMap[id] = { normId: id, offerId: row[idx.id] };
-      lifecycle[id] = { exitDate: row[idx.attrStageStart + 12] || '' };
-    });
-    applyQuarantineDateWindows_(stats, merchantMap, lifecycle, 30, settings.excludeLastDays, {});
-  }
+  // Match the dashboard's funnel period, not the quarantine rule's review window.
   activeRows.forEach(function(row) {
     var id = normOfferId_(row[idx.id]);
-    costs[id] = stats[id] ? toNumber_(stats[id].cost) : 0;
+    costs[id] = toNumber_(row[idx.cost]);
   });
   return costs;
 }
