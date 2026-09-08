@@ -347,7 +347,6 @@ function readSettings_(ss) {
     spendToPriceThreshold: 0.30,
     spendQuarantineDays: 7,
     enableExpensiveClickRule: true,
-    expensiveClickLookbackDays: 0,
     expensiveClickThreshold: 100.00,
     expensiveClickQuarantineDays: 7,
     enableTargetCpaRule: true,
@@ -445,7 +444,6 @@ function readSettings_(ss) {
   defaults.spendToPriceThreshold = readSettingNumber_(map, "spend_to_price_threshold", defaults.spendToPriceThreshold);
   defaults.spendQuarantineDays = readSettingInt_(map, "spend_quarantine_days", defaults.spendQuarantineDays);
   defaults.enableExpensiveClickRule = readSettingBool_(map, "enable_expensive_click_rule", defaults.enableExpensiveClickRule);
-  defaults.expensiveClickLookbackDays = readSettingInt_(map, "expensive_click_lookback_days", defaults.expensiveClickLookbackDays);
   defaults.expensiveClickThreshold = readSettingNumber_(map, "expensive_click_threshold", defaults.expensiveClickThreshold);
   defaults.expensiveClickQuarantineDays = readSettingInt_(map, "expensive_click_quarantine_days", defaults.expensiveClickQuarantineDays);
   defaults.enableTargetCpaRule = readSettingBool_(map, "enable_target_cpa_rule", defaults.enableTargetCpaRule);
@@ -516,7 +514,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["shopping_excluded_value", settings.shoppingExcludedValue, "Значення для першої excluded_destination колонки, яку карантин пише в Products."],
     ["display_excluded_value", settings.displayExcludedValue, "Значення для другої excluded_destination колонки, яку карантин пише в Products."],
     ["-- 7.2 Загальні правила карантину --", "", ""],
-    ["exclude_last_days", settings.excludeLastDays, "Скільки останніх днів не враховувати в карантині. 2 = не брати сьогодні і вчора."],
+    ["exclude_last_days", settings.excludeLastDays, "Останні N днів не враховуються для кліків без продажів, перевитрати та дорогого CPA. 2 = без сьогодні й учора. Дорогий клік завжди перевіряється за вчора."],
     ["problem_threshold", settings.problemThreshold, "З якого quarantine_count товар вважається проблемним."],
     ["quarantine_log_max_rows", settings.quarantineLogMaxRows, "Скільки останніх подій залишати в QuarantineLog. 0 = не чистити лог."],
     ["-- 7.3 Кліки без продажів --", "", ""],
@@ -530,8 +528,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["spend_to_price_threshold", settings.spendToPriceThreshold, "0.30 = витрати від 30% ціни товару."],
     ["spend_quarantine_days", settings.spendQuarantineDays, "На скільки днів товар піде в карантин через overspend."],
     ["-- 7.5 Дорогий клік --", "", ""],
-    ["enable_expensive_click_rule", settings.enableExpensiveClickRule, "true = перевіряти дорогий середній клік."],
-    ["expensive_click_lookback_days", settings.expensiveClickLookbackDays, "Період перевірки дорогого CPC. 0 = один останній перевірений день після exclude_last_days."],
+    ["enable_expensive_click_rule", settings.enableExpensiveClickRule, "Увімкнено = перевіряти середній CPC лише за вчора, незалежно від exclude_last_days."],
     ["expensive_click_threshold", settings.expensiveClickThreshold, "Поріг середнього CPC."],
     ["expensive_click_quarantine_days", settings.expensiveClickQuarantineDays, "На скільки днів товар піде в карантин через дорогий клік."],
     ["-- 7.6 Продажі з дорогим CPA --", "", ""],
@@ -818,9 +815,6 @@ function validateRuntimeSettings_(settings) {
   }
 
 
-  if (settings.expensiveClickLookbackDays < 0) {
-    throw new Error("expensive_click_lookback_days must be 0 or more.");
-  }
 
 
   if (settings.expensiveClickThreshold <= 0) {
