@@ -2035,7 +2035,8 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
 
 
     if (!wasActive) {
-      entry.count += 1;
+      var historyEntry = historyMap[normId];
+      entry.count = Math.max(toNumber_(entry.count), historyEntry ? toNumber_(historyEntry.count) : 0) + 1;
       entry.lastAdded = todayStr;
       upsertQuarantineHistory_(historyMap, candidate.offerId, entry.count, todayStr);
 
