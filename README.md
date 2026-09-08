@@ -32,6 +32,7 @@ node tests/quarantine-counter.cjs
 node tests/category-label-independence.cjs
 node tests/target-cpa-fallback.cjs
 node tests/quarantine-registry-reasons.cjs
+node tests/dashboard-extended-layout.cjs
 ```
 
 Вони не замінюють запуск у Google Ads. Перевірку фактичного виходу товару з карантину на бойовому проєкті відкладено; майбутнє оновлення вигляду дашбордів не входить у поточну реалізацію.
