@@ -3432,9 +3432,6 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
       p.dataSource || "",
       p.feedLabel || "",
       p.contentLanguage || "",
-      p.categoryMatchId || "",
-      p.productTypeSource || "",
-      p.productTypeStatus || "",
       productTypeFullPath,
       productTypeAllPaths
     ];
@@ -3620,7 +3617,7 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
     "дата зміни статусу",
     "exclusion_reasons"
   ];
-  header.push("data_source_id", "feed_label", "content_language", "category_match_id", "product_type_source", "product_type_status");
+  header.push("data_source_id", "feed_label", "content_language");
   header.push("product_type_full_path", "product_type_all_paths");
 
 
@@ -4406,7 +4403,7 @@ function normalizeDashboardStage_(stage) {
 
 function getOutputRowIndexes_(maxLevels) {
   var metaStart = 6;
-  var metaCols = 8;
+  var metaCols = 5;
   var levelStart = metaStart + metaCols;
   var statsStart = levelStart + maxLevels;
   var attributionStart = statsStart + 34 + 14;
