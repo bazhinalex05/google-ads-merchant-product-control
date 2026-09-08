@@ -2339,6 +2339,7 @@ function buildProductTypeStatsMap_(products, adsStatsMap, maxLevels) {
       }
       nodeStats.cost += stats.cost || 0;
       nodeStats.roasConversionValue += stats.conversionValue || 0;
+      nodeStats.conversions += stats.conversions || 0;
       if (currentDepth === depth) {
         nodeStats.leafProductCount += 1;
         if (product.price > 0) {
@@ -2359,9 +2360,8 @@ function buildProductTypeStatsMap_(products, adsStatsMap, maxLevels) {
     s.rawAov = s.priceCount > 0 ? s.priceSum / s.priceCount : 0;
     s.leafAov = s.leafPriceCount > 0 ? s.leafPriceSum / s.leafPriceCount : 0;
     s.aov = s.rawAov;
-    s.conversions = s.leafConversions;
-    s.conversionValue = s.leafConversionValue;
-    s.cpa = s.leafConversions > 0 ? s.leafCost / s.leafConversions : 0;
+    s.conversionValue = s.roasConversionValue;
+    s.cpa = s.conversions > 0 ? s.cost / s.conversions : 0;
   }
 
 
@@ -2443,6 +2443,7 @@ function dfsEmitTreeRows_(node, level, currentPath, rows, manualStateMap, statsM
       priorityLabel: savedState ? (savedState.priorityLabel || "") : "",
       targetCpa: savedState ? (savedState.targetCpa || "") : "",
       marginPercent: savedState ? savedState.marginPercent : "",
+      manualTargetRoas: savedState ? savedState.manualTargetRoas : "",
       actualRoas: statsMap[pathKey] && statsMap[pathKey].cost > 0 ? statsMap[pathKey].roasConversionValue / statsMap[pathKey].cost : "",
       comment: savedState ? (savedState.comment || "") : ""
     });
@@ -2487,10 +2488,10 @@ function buildProductTypeDisplayStats_(pathKey, node, currentPath, statsMap, max
 
   return {
     aov: childAovCount > 0 ? childAovSum / childAovCount : (stats.aov || 0),
-    conversions: stats.leafConversions || 0,
+    conversions: stats.conversions || 0,
     cost: stats.cost || 0,
-    cpa: (stats.leafConversions || 0) > 0 ? (stats.leafCost || 0) / stats.leafConversions : 0,
-    conversionValue: stats.leafConversionValue || 0
+    cpa: stats.cpa || 0,
+    conversionValue: stats.conversionValue || 0
   };
 }
 
@@ -2505,6 +2506,8 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var targetCpaIndex = findHeaderIndex_(header, "target_cpa");
   var marginIndex = findHeaderIndex_(header, "margin_percent");
+  var targetRoasIndex = findHeaderIndex_(header, "target_roas");
+  var targetRoasFormulas = targetRoasIndex >= 0 ? sheet.getRange(2, targetRoasIndex + 1, lastRow - 1, 1).getFormulas() : [];
   var commentIndex = findHeaderIndex_(header, "comment");
   var winterIndex = findHeaderIndex_(header, "winter");
   var springIndex = findHeaderIndex_(header, "spring");
@@ -2536,6 +2539,7 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
       priorityLabel: priorityLabelIndex >= 0 && row[priorityLabelIndex] != null ? String(row[priorityLabelIndex]) : "",
       targetCpa: row[targetCpaIndex] == null ? "" : String(row[targetCpaIndex]),
       marginPercent: marginIndex >= 0 ? row[marginIndex] : "",
+      manualTargetRoas: targetRoasIndex >= 0 && !targetRoasFormulas[i][0] ? row[targetRoasIndex] : "",
       comment: row[commentIndex] == null ? "" : String(row[commentIndex])
     };
   }
@@ -2550,7 +2554,7 @@ function applyProductTypesTargets_(rows, settings) {
     var row = rows[i];
     row.effectiveTargetCpa = toNumber_(row.targetCpa) > 0 ? toNumber_(row.targetCpa) : toNumber_(settings.defaultTargetCpa);
     var margin = row.marginPercent === "" || row.marginPercent == null ? toNumber_(settings.defaultMarginPercent) : toNumber_(row.marginPercent);
-    row.targetRoas = margin > 0 && margin <= 100 ? 100 / margin : "";
+    row.targetRoas = toNumber_(row.manualTargetRoas) > 0 ? toNumber_(row.manualTargetRoas) : (margin > 0 && margin <= 100 ? 100 / margin : "");
   }
 }
 
@@ -2563,7 +2567,14 @@ function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
     var displayPath = makeSparseDisplayPath_(rows[r].path, maxLevels);
     var row = [];
     for (var c = 0; c < header.length; c++) {
-      row.push(getProductTypesRowValue_(header[c], rows[r], displayPath, maxLevels, r + 2));
+      if (header[c] === "target_roas" && !(toNumber_(rows[r].manualTargetRoas) > 0)) {
+        var marginCell = columnLetter_(findHeaderIndex_(header, "margin_percent") + 1) + (r + 2);
+        var settingsSheet = quoteSheetNameForFormula_(settings.settingsSheetName);
+        var marginFormula = 'IF(' + marginCell + '="",IFERROR(INDEX(' + settingsSheet + '!B:B,MATCH("default_margin_percent",' + settingsSheet + '!A:A,0)),0),' + marginCell + ')';
+        row.push('=IFERROR(IF(AND(' + marginFormula + '>0,' + marginFormula + '<=100),100/(' + marginFormula + '),""),"")');
+      } else {
+        row.push(getProductTypesRowValue_(header[c], rows[r], displayPath, maxLevels, r + 2));
+      }
     }
     output.push(row);
   }
@@ -2734,8 +2745,10 @@ function formatProductTypesSheet_(sheet, rowCount, header, settings) {
     sheet.getRange(2, marginCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND).setNumberFormat('0.00"%"');
     var roasCol = findHeaderIndex_(header, "actual_roas_30d") + 1;
     var targetRoasCol = findHeaderIndex_(header, "target_roas") + 1;
+    sheet.getRange(2, targetRoasCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
     sheet.getRange(2, roasCol, rowCount - 1, 1).setNumberFormat("0.00%");
     sheet.getRange(2, targetRoasCol, rowCount - 1, 1).setNumberFormat("0.00%");
+    SpreadsheetApp.flush();
     var actuals = sheet.getRange(2, roasCol, rowCount - 1, 1).getValues();
     var targets = sheet.getRange(2, targetRoasCol, rowCount - 1, 1).getValues();
     sheet.getRange(2, roasCol, rowCount - 1, 1).setBackgrounds(actuals.map(function(value, i) {
@@ -3045,10 +3058,11 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
     var productRow = rowsForSeasonality[p];
     var offerId = safeTrim_(productRow[0]);
     var manual = manualMap[normOfferId_(offerId)] || {};
-    var fullPath = normalizeProductType_(productRow[12]);
+    var outputIndexes = getOutputRowIndexes_(maxLevels);
+    var fullPath = normalizeProductType_(productRow[outputIndexes.productTypeFullPath]);
     var sheetRow = p + 2;
     var row = [offerId, productRow[1] || "", fullPath];
-    for (var level = 0; level < maxLevels; level++) row.push(productRow[14 + level] || "");
+    for (var level = 0; level < maxLevels; level++) row.push(productRow[outputIndexes.productTypeLevelStart + level] || "");
     row.push(
       !!manual.manualWinter,
       !!manual.manualSpring,
@@ -3763,6 +3777,18 @@ function formatProductDiagnosticsSheet_(sheet, rowCount, colCount) {
   if (rowCount > 1) {
     var header = sheet.getRange(1, 1, 1, colCount).getValues()[0];
     var currencyFormat = currencyNumberFormat_(getAccountCurrencyCode_());
+    ["impressions", "clicks", "conversions", "benchmark_click_threshold", "benchmark_impression_threshold", "no_sales_clicks", "no_sales_conversions", "spend_rule_conversions", "target_cpa_rule_conversions", "previous_conversions", "current_conversions", "conversion_delta", "last_seen_conversions"].forEach(function(name) {
+      setDiagnosticsNumberFormat_(sheet, header, name, rowCount, "0.##");
+    });
+    ["roas", "spend_to_price_threshold"].forEach(function(name) {
+      setDiagnosticsNumberFormat_(sheet, header, name, rowCount, "0.00%");
+    });
+    setDiagnosticsNumberFormat_(sheet, header, "expensive_click_threshold", rowCount, currencyFormat);
+    setDiagnosticsNumberFormat_(sheet, header, "last_seen_conversion_value", rowCount, currencyFormat);
+    for (var stage = 1; stage <= 6; stage++) {
+      setDiagnosticsNumberFormat_(sheet, header, "attr_conversions_stage_" + stage, rowCount, "0.##");
+      setDiagnosticsNumberFormat_(sheet, header, "attr_conversion_value_stage_" + stage, rowCount, currencyFormat);
+    }
     setDiagnosticsNumberFormat_(sheet, header, "cost", rowCount, currencyFormat);
     setDiagnosticsNumberFormat_(sheet, header, "price", rowCount, currencyFormat);
     setDiagnosticsNumberFormat_(sheet, header, "conversion_value", rowCount, currencyFormat);
@@ -4457,6 +4483,8 @@ function getOutputRowIndexes_(maxLevels) {
     display: 3,
     statusDate: 4,
     exclusionReasons: 5,
+    productTypeFullPath: levelStart - 2,
+    productTypeLevelStart: levelStart,
     impressions: statsStart,
     clicks: statsStart + 1,
     cost: statsStart + 2,
