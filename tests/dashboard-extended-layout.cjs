@@ -11,7 +11,8 @@ ctx.formatDate_ = () => '2026-09-08';
 ctx.getDateOnly_ = value => value;
 const settings = { maxLevels: 5, funnelDaysAgo: 14, defaultBenchmarkGroup: 'other',
   enableQuarantine: true, enableNoSalesRule: true, enableSpendRule: true,
-  enableExpensiveClickRule: true, enableTargetCpaRule: true, clicksThreshold: 100, spendToPriceThreshold: 0.3 };
+  enableExpensiveClickRule: true, enableTargetCpaRule: true, clicksThreshold: 100, spendToPriceThreshold: 0.3,
+  targetCpaLookbackDays: 30, noSalesLookbackDays: 30, spendLookbackDays: 30, excludeLastDays: 2 };
 const idx = ctx.getOutputRowIndexes_(5);
 function product(id, group, stage, cost = 20, conversions = 0) {
   const row = Array(77).fill('');
@@ -41,6 +42,18 @@ assert.equal(model.priorities[1].quarantine.noSales.products, 0);
 assert.equal(model.quarantine.newToday, 1);
 assert.equal(ctx.referenceQuarantineCost_('noSales', b, idx, settings, state), 100);
 assert.equal(ctx.referenceQuarantineCost_('spend', b, idx, settings, state), 30);
+const noCpa = ctx.buildReferenceDashboardModel_([a, b], { ...settings, enableTargetCpaRule: false }, state);
+assert.equal(noCpa.quarantine.activeCost, 120, 'full spend, not capped at 100 clicks or 30% of price');
+assert.equal(noCpa.priorities[1].quarantine.cost, 120, 'one active product counted once across reasons');
+let windowChecked = false;
+ctx.getAdsStatsMap_ = (days, excluded) => { assert.equal(days, 30); assert.equal(excluded, 2); return { b: { cost: 999 } }; };
+ctx.applyQuarantineDateWindows_ = (stats, merchant, lifecycle, days, excluded) => {
+  assert.equal(lifecycle.b.exitDate, '01.09.2026'); assert.equal(days, 30); assert.equal(excluded, 2);
+  assert.equal(Object.keys(merchant).length, 1); stats.b.cost = 75; windowChecked = true;
+};
+const exited = b.slice(); exited[idx.attrStageStart + 12] = '01.09.2026';
+assert.equal(ctx.referenceActiveQuarantineCosts_([a, exited], { ...settings, enableTargetCpaRule: false, noSalesLookbackDays: 7, spendLookbackDays: 7 }, {}).b, 75);
+assert.ok(windowChecked);
 const disabled = ctx.buildReferenceDashboardModel_([b], { ...settings, enableQuarantine: false }, state);
 assert.equal(disabled.quarantine.active, 0);
 assert.equal(disabled.quarantine.targetCpaEnabled, false);

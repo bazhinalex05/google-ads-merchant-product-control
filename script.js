@@ -5592,6 +5592,7 @@ function buildReferenceDashboardModel_(outputRows, settings, quarantineState) {
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var today = formatDate_(getDateOnly_(new Date()));
   var registry = quarantineState && quarantineState.registryMap || {};
+  var activeCosts = referenceActiveQuarantineCosts_(outputRows, settings, quarantineState);
   var quarantine = { active: 0, newToday: 0, activeCost: 0, noSales: 0, spend: 0, expensiveClick: 0, targetCpa: 0 };
   var rules = [
     { key: 'noSales', reason: 'NO_SALES', setting: 'enableNoSalesRule' },
@@ -5635,9 +5636,10 @@ function buildReferenceDashboardModel_(outputRows, settings, quarantineState) {
     // Like Extended, attribute each product's quarantine cost to the largest applicable reason once.
     if (best.key) {
       group.quarantine[best.key].products++;
-      group.quarantine[best.key].cost += best.cost;
-      group.quarantine.cost += best.cost;
-      quarantine.activeCost += best.cost;
+      var actualCost = Math.max(0, toNumber_(activeCosts[normOfferId_(row[idx.id])]));
+      group.quarantine[best.key].cost += actualCost;
+      group.quarantine.cost += actualCost;
+      quarantine.activeCost += actualCost;
     }
   }
   var names = Object.keys(groups);
@@ -5659,6 +5661,37 @@ function buildReferenceDashboardModel_(outputRows, settings, quarantineState) {
     stages: referenceDashboardStageAggs_(stages), priorities: priorities, quarantine: quarantine,
     periodLabel: 'за останні ' + settings.funnelDaysAgo + ' днів'
   };
+}
+
+function referenceActiveQuarantineCosts_(rows, settings, state) {
+  var costs = {};
+  if (!settings.enableQuarantine) return costs;
+  var idx = getOutputRowIndexes_(settings.maxLevels);
+  var activeRows = rows.filter(function(row) { return row[idx.impressions + 16] === 'YES'; });
+  if (!activeRows.length) return costs;
+  // The CPA diagnostic cost already uses this exact window, including the last exit cutoff.
+  if (settings.enableTargetCpaRule && Number(settings.targetCpaLookbackDays) === 30) {
+    activeRows.forEach(function(row) { costs[normOfferId_(row[idx.id])] = toNumber_(row[idx.impressions + 29]); });
+    return costs;
+  }
+  var stats = null;
+  if (state && settings.enableNoSalesRule && Number(settings.noSalesLookbackDays) === 30) stats = state.noSalesStats;
+  if (!stats && state && settings.enableSpendRule && Number(settings.spendLookbackDays) === 30) stats = state.spendStats;
+  if (!stats) {
+    stats = getAdsStatsMap_(30, settings.excludeLastDays);
+    var merchantMap = {}, lifecycle = {};
+    activeRows.forEach(function(row) {
+      var id = normOfferId_(row[idx.id]);
+      merchantMap[id] = { normId: id, offerId: row[idx.id] };
+      lifecycle[id] = { exitDate: row[idx.attrStageStart + 12] || '' };
+    });
+    applyQuarantineDateWindows_(stats, merchantMap, lifecycle, 30, settings.excludeLastDays, {});
+  }
+  activeRows.forEach(function(row) {
+    var id = normOfferId_(row[idx.id]);
+    costs[id] = stats[id] ? toNumber_(stats[id].cost) : 0;
+  });
+  return costs;
 }
 
 function referenceQuarantineCost_(key, row, idx, settings, state) {
