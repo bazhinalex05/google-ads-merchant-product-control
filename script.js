@@ -596,7 +596,7 @@ function formatSettingsTemplate_(sheet, rows) {
       sheet.getRange(i + 1, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
     }
     if (key === "spend_to_price_threshold" || key === "target_cpa_excess_threshold") {
-      sheet.getRange(i + 1, 2).setNumberFormat("0.##%");
+      sheet.getRange(i + 1, 2).setNumberFormat("0%");
     }
   }
 
