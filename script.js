@@ -357,7 +357,7 @@ function readSettings_(ss) {
     defaultTargetCpa: 0,
     defaultMarginPercent: 0,
     targetCpaLookbackDays: 30,
-    targetCpaExcessThreshold: 0,
+    targetCpaExcessThreshold: 0.20,
     targetCpaQuarantineDays: 7,
     quarantineLogMaxRows: 1000,
     merchantApiPageSize: 1000,
