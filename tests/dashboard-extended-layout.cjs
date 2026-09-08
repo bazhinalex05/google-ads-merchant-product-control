@@ -141,4 +141,19 @@ assert.equal(data.cell(4, 1).style.setBackground, 'custom');
 ctx.writeReferenceDashboardData_(data, ctx.buildReferenceDashboardModel_([], settings, {}));
 ctx.writeReferenceDashboardData_(data, model);
 assert.equal(data.cell(8, 1).style.setBackground, '#2f5597', 'new blocks after empty catalog are formatted');
+const dashboardStart = code.indexOf('  if (settings.enableDashboardData || settings.enableDashboard) {');
+const dashboardEnd = code.indexOf('  ensureCoreSheetOrder_', dashboardStart);
+const dashboardPass = code.slice(dashboardStart, dashboardEnd);
+for (const enableDashboard of [false, true]) {
+  for (const enableDashboardData of [false, true]) {
+    ctx.settings = { ...settings, enableDashboard, enableDashboardData };
+    ctx.outputRows = [a, b]; ctx.merchantProducts = []; ctx.quarantineState = state;
+    ctx.sheets = { dashboard: new Sheet(), dashboardData: new Sheet() };
+    ctx.getDashboardPeriodStatsMap_ = () => { throw new Error('No obsolete period queries'); };
+    vm.runInContext(dashboardPass, ctx);
+    assert.equal(ctx.sheets.dashboard.charts.length, enableDashboard ? 4 : 0);
+    if (enableDashboard) assert.equal(ctx.sheets.dashboard.cell(31, 5).value, 1);
+    if (enableDashboardData) assert.equal(ctx.sheets.dashboardData.cell(22, 8).value, 1);
+  }
+}
 console.log('PASS: Extended dashboard layout, four quarantines, charts, live values, currency, dynamic growth/shrink and preserved formatting');

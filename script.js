@@ -240,28 +240,17 @@ function runUnifiedProductControl() {
     Logger.log("ProductDiagnostics пропущено через enable_product_diagnostics=false.");
   }
   if (settings.enableDashboardData || settings.enableDashboard) {
-    var dashboardStats14Map = getDashboardPeriodStatsMap_(
-      14,
-      Number(settings.funnelDaysAgo) === 14 ? funnelMap : null,
-      merchantMap,
-      settings
-    );
-    var dashboardStats30Map = getDashboardPeriodStatsMap_(
-      30,
-      stats30Map || (Number(settings.funnelDaysAgo) === 30 ? funnelMap : null),
-      merchantMap,
-      settings
-    );
+    var dashboardModel = buildReferenceDashboardModel_(outputRows, settings, quarantineState);
     if (settings.enableDashboardData) {
       Logger.log("Writing DashboardData...");
-      writeDashboardDataSheet_(sheets.dashboardData, outputRows, merchantProducts, dashboardStats14Map, dashboardStats30Map, settings);
+      writeDashboardDataSheet_(sheets.dashboardData, outputRows, merchantProducts, null, null, settings, dashboardModel);
       Logger.log("DashboardData written.");
     } else {
       Logger.log("DashboardData пропущено через enable_dashboard_data=false.");
     }
     if (settings.enableDashboard) {
       Logger.log("Ensuring Dashboard...");
-      ensureDashboardSheet_(sheets.dashboard, settings);
+      ensureDashboardSheet_(sheets.dashboard, settings, dashboardModel);
       Logger.log("Dashboard ready.");
     } else {
       Logger.log("Dashboard пропущено через enable_dashboard=false.");
