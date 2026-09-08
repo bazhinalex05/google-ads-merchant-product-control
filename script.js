@@ -332,6 +332,7 @@ function readSettings_(ss) {
     productTypeCustomLabelField: "custom_label_2",
     productTypeFeedUrl: "",
     productTypeIdPrefixesToStrip: "",
+    productTypeIdSuffixesToStrip: "",
     shoppingExcludedValue: "Shopping_Ads",
     displayExcludedValue: "Display_Ads",
     funnelDaysAgo: 14,
@@ -428,6 +429,7 @@ function readSettings_(ss) {
   defaults.productTypeCustomLabelField = readSettingString_(map, "product_type_custom_label_field", defaults.productTypeCustomLabelField);
   defaults.productTypeFeedUrl = readSettingString_(map, "product_type_feed_url", defaults.productTypeFeedUrl);
   defaults.productTypeIdPrefixesToStrip = readSettingString_(map, "product_type_id_prefixes_to_strip", defaults.productTypeIdPrefixesToStrip);
+  defaults.productTypeIdSuffixesToStrip = readSettingString_(map, "product_type_id_suffixes_to_strip", defaults.productTypeIdSuffixesToStrip);
   defaults.shoppingExcludedValue = readSettingString_(map, "shopping_excluded_value", defaults.shoppingExcludedValue);
   defaults.displayExcludedValue = readSettingString_(map, "display_excluded_value", defaults.displayExcludedValue);
   defaults.funnelDaysAgo = readSettingInt_(map, "funnel_days_ago", defaults.funnelDaysAgo);
@@ -498,6 +500,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["product_type_custom_label_field", settings.productTypeCustomLabelField, "custom_label_0..custom_label_4, де лежить повна категорійна цепочка, наприклад Auto > Dodge > Dodge Dart."],
     ["product_type_feed_url", settings.productTypeFeedUrl, "Порожньо = брати product_type з Merchant API. Якщо заповнено, ProductTypes бере категорії тільки з цього XML: g:id + g:product_type. Кілька URL можна писати через кому або з нового рядка."],
     ["product_type_id_prefixes_to_strip", settings.productTypeIdPrefixesToStrip, "Необов'язково. Пишемо тільки префікси ID, які команда додає на початок товарного ID, через кому: 00,01,FX. Для порівняння категорій скрипт зріже ці префікси, але в Products залишить реальні Merchant ID."],
+    ["product_type_id_suffixes_to_strip", settings.productTypeIdSuffixesToStrip, "Необов'язково. Суфікси (постфікси) в кінці ID через кому: _ua,_copy. Відкидаються лише для пошуку категорій у зовнішньому XML; статистика не об'єднується, реальні ID у Products не змінюються."],
     ["-- 6. Етапи воронки --", "", ""],
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
@@ -732,7 +735,8 @@ function getLateSettingsRows_(settings) {
     ["enable_product_type_custom_label_source", settings.enableProductTypeCustomLabelSource, "true = брати дерево product_type з custom label, вказаного нижче; якщо там порожньо, буде fallback на штатний product_type."],
     ["product_type_custom_label_field", settings.productTypeCustomLabelField, "custom_label_0..custom_label_4, де лежить повна категорійна цепочка, наприклад Auto > Dodge > Dodge Dart."],
     ["product_type_feed_url", settings.productTypeFeedUrl, "Порожньо = брати product_type з Merchant API. Якщо заповнено, ProductTypes бере категорії тільки з цього XML: g:id + g:product_type. Кілька URL можна писати через кому або з нового рядка."],
-    ["product_type_id_prefixes_to_strip", settings.productTypeIdPrefixesToStrip, "Необов'язково. Пишемо тільки префікси ID, які команда додає на початок товарного ID, через кому: 00,01,FX. Для порівняння категорій скрипт зріже ці префікси, але в Products залишить реальні Merchant ID."]
+    ["product_type_id_prefixes_to_strip", settings.productTypeIdPrefixesToStrip, "Необов'язково. Пишемо тільки префікси ID, які команда додає на початок товарного ID, через кому: 00,01,FX. Для порівняння категорій скрипт зріже ці префікси, але в Products залишить реальні Merchant ID."],
+    ["product_type_id_suffixes_to_strip", settings.productTypeIdSuffixesToStrip, "Суфікси (постфікси) в кінці ID через кому. Лише для пошуку категорій у зовнішньому XML; реальні ID та статистика не змінюються."]
   ];
 }
 
@@ -1276,20 +1280,22 @@ function applyExternalProductTypeFeed_(merchantProducts, settings) {
 
   var externalMap = buildExternalProductTypeMap_(urls);
   var prefixes = parseIdPrefixes_(settings.productTypeIdPrefixesToStrip);
+  var suffixes = parseIdPrefixes_(settings.productTypeIdSuffixesToStrip);
   var matchedExact = 0;
   var matchedPrefix = 0;
+  var matchedSuffix = 0;
   var missing = 0;
 
 
   for (var i = 0; i < merchantProducts.length; i++) {
     var product = merchantProducts[i];
-    var match = findExternalProductTypeMatch_(product.offerId, externalMap, prefixes);
+    var match = findExternalProductTypeMatch_(product.offerId, externalMap, prefixes, suffixes);
     if (match) {
       product.productTypes = [match.productType];
       product.categoryMatchId = match.matchId;
       product.productTypeSource = "external_feed";
-      product.productTypeStatus = match.usedPrefix ? "external_feed_prefix" : "external_feed_exact";
-      if (match.usedPrefix) matchedPrefix++; else matchedExact++;
+      product.productTypeStatus = match.usedSuffix ? "external_feed_suffix" : (match.usedPrefix ? "external_feed_prefix" : "external_feed_exact");
+      if (match.usedSuffix) matchedSuffix++; else if (match.usedPrefix) matchedPrefix++; else matchedExact++;
     } else {
       product.productTypes = [];
       product.categoryMatchId = product.offerId;
@@ -1304,6 +1310,7 @@ function applyExternalProductTypeFeed_(merchantProducts, settings) {
   Logger.log("External product_type IDs loaded: " + Object.keys(externalMap).length);
   Logger.log("External product_type exact matches: " + matchedExact);
   Logger.log("External product_type prefix matches: " + matchedPrefix);
+  Logger.log("External product_type suffix matches: " + matchedSuffix);
   Logger.log("External product_type missing matches: " + missing);
 }
 
@@ -1327,7 +1334,7 @@ function buildExternalProductTypeMap_(urls) {
 }
 
 
-function findExternalProductTypeMatch_(offerId, externalMap, prefixes) {
+function findExternalProductTypeMatch_(offerId, externalMap, prefixes, suffixes) {
   var exactKey = normOfferId_(offerId);
   if (externalMap[exactKey]) {
     return {
@@ -1356,6 +1363,21 @@ function findExternalProductTypeMatch_(offerId, externalMap, prefixes) {
   }
 
 
+  var candidates = [raw];
+  for (var p = 0; p < prefixes.length; p++) {
+    if (prefixes[p] && lower.indexOf(prefixes[p].toLowerCase()) === 0) candidates.push(raw.substring(prefixes[p].length));
+  }
+  suffixes = suffixes || [];
+  for (var c = 0; c < candidates.length; c++) {
+    for (var s = 0; s < suffixes.length; s++) {
+      var suffix = suffixes[s];
+      var candidate = candidates[c];
+      if (!suffix || candidate.length <= suffix.length || candidate.slice(-suffix.length).toLowerCase() !== suffix.toLowerCase()) continue;
+      var base = candidate.slice(0, -suffix.length);
+      var entry = externalMap[normOfferId_(base)];
+      if (entry) return { matchId: base, productType: entry.productType, usedPrefix: c > 0, usedSuffix: true };
+    }
+  }
   return null;
 }
 
