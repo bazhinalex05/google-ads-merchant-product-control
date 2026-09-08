@@ -143,6 +143,7 @@ function runUnifiedProductControl() {
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, []);
     var productTypeStatsMap = buildProductTypeStatsMap_(merchantProducts, stats30Map, settings.maxLevels);
     productTypeRows = buildProductTypeTreeRows_(merchantProducts, manualStateMap, productTypeStatsMap, settings.maxLevels);
+    applyProductTypesTargets_(productTypeRows, settings);
     writeProductTypesSheet_(sheets.productTypes, productTypeRows, settings.maxLevels, settings);
     if (settings.enableProductTypeFilter) productTypeRules = buildAllowanceRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
@@ -350,6 +351,8 @@ function readSettings_(ss) {
     expensiveClickThreshold: 100.00,
     expensiveClickQuarantineDays: 7,
     enableTargetCpaRule: true,
+    defaultTargetCpa: 0,
+    defaultMarginPercent: 0,
     targetCpaLookbackDays: 30,
     targetCpaExcessThreshold: 0,
     targetCpaQuarantineDays: 7,
@@ -446,6 +449,8 @@ function readSettings_(ss) {
   defaults.expensiveClickThreshold = readSettingNumber_(map, "expensive_click_threshold", defaults.expensiveClickThreshold);
   defaults.expensiveClickQuarantineDays = readSettingInt_(map, "expensive_click_quarantine_days", defaults.expensiveClickQuarantineDays);
   defaults.enableTargetCpaRule = readSettingBool_(map, "enable_target_cpa_rule", defaults.enableTargetCpaRule);
+  defaults.defaultTargetCpa = readSettingNumber_(map, "default_target_cpa", defaults.defaultTargetCpa);
+  defaults.defaultMarginPercent = readSettingNumber_(map, "default_margin_percent", defaults.defaultMarginPercent);
   defaults.targetCpaLookbackDays = readSettingInt_(map, "target_cpa_lookback_days", defaults.targetCpaLookbackDays);
   defaults.targetCpaExcessThreshold = readSettingNumber_(map, "target_cpa_excess_threshold", defaults.targetCpaExcessThreshold);
   defaults.targetCpaQuarantineDays = readSettingInt_(map, "target_cpa_quarantine_days", defaults.targetCpaQuarantineDays);
@@ -523,6 +528,8 @@ function writeSettingsTemplate_(sheet, settings) {
     ["expensive_click_threshold", settings.expensiveClickThreshold, "Поріг середнього CPC."],
     ["expensive_click_quarantine_days", settings.expensiveClickQuarantineDays, "На скільки днів товар піде в карантин через дорогий клік."],
     ["-- 6.6 Продажі з дорогим CPA --", "", ""],
+    ["default_target_cpa", settings.defaultTargetCpa, "Загальний Target CPA сайту. Ручний target_cpa категорії має пріоритет. 0 = не задано."],
+    ["default_margin_percent", settings.defaultMarginPercent, "Маржа до реклами у відсотках: 30 означає 30%. Маржа категорії має пріоритет. 0 = не задано."],
     ["enable_target_cpa_rule", settings.enableTargetCpaRule, "true = ставити в карантин товари з продажами, де CPA вище категорійного target_cpa."],
     ["target_cpa_lookback_days", settings.targetCpaLookbackDays, "Період перевірки CPA карантину: витрати і конверсії за N днів до exclude_last_days."],
     ["target_cpa_excess_threshold", settings.targetCpaExcessThreshold, "0 = будь-яке перевищення target_cpa; 0.20 = CPA має бути на 20% вище target_cpa."],
@@ -2331,6 +2338,7 @@ function buildProductTypeStatsMap_(products, adsStatsMap, maxLevels) {
         nodeStats.priceSum += product.price;
       }
       nodeStats.cost += stats.cost || 0;
+      nodeStats.roasConversionValue += stats.conversionValue || 0;
       if (currentDepth === depth) {
         nodeStats.leafProductCount += 1;
         if (product.price > 0) {
@@ -2375,6 +2383,7 @@ function getOrCreateProductTypeStats_(statsMap, key) {
       priceCount: 0,
       priceSum: 0,
       rawAov: 0,
+      roasConversionValue: 0,
       cost: 0,
       leafProductCount: 0,
       leafPriceCount: 0,
@@ -2433,6 +2442,8 @@ function dfsEmitTreeRows_(node, level, currentPath, rows, manualStateMap, statsM
       benchmarkLabel: savedState ? (savedState.benchmarkLabel || "") : "",
       priorityLabel: savedState ? (savedState.priorityLabel || "") : "",
       targetCpa: savedState ? (savedState.targetCpa || "") : "",
+      marginPercent: savedState ? savedState.marginPercent : "",
+      actualRoas: statsMap[pathKey] && statsMap[pathKey].cost > 0 ? statsMap[pathKey].roasConversionValue / statsMap[pathKey].cost : "",
       comment: savedState ? (savedState.comment || "") : ""
     });
   }
@@ -2493,6 +2504,7 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
 
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
   var targetCpaIndex = findHeaderIndex_(header, "target_cpa");
+  var marginIndex = findHeaderIndex_(header, "margin_percent");
   var commentIndex = findHeaderIndex_(header, "comment");
   var winterIndex = findHeaderIndex_(header, "winter");
   var springIndex = findHeaderIndex_(header, "spring");
@@ -2523,6 +2535,7 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
       benchmarkLabel: benchmarkLabelIndex >= 0 && row[benchmarkLabelIndex] != null ? String(row[benchmarkLabelIndex]) : "",
       priorityLabel: priorityLabelIndex >= 0 && row[priorityLabelIndex] != null ? String(row[priorityLabelIndex]) : "",
       targetCpa: row[targetCpaIndex] == null ? "" : String(row[targetCpaIndex]),
+      marginPercent: marginIndex >= 0 ? row[marginIndex] : "",
       comment: row[commentIndex] == null ? "" : String(row[commentIndex])
     };
   }
@@ -2531,6 +2544,15 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
   return result;
 }
 
+
+function applyProductTypesTargets_(rows, settings) {
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    row.effectiveTargetCpa = toNumber_(row.targetCpa) > 0 ? toNumber_(row.targetCpa) : toNumber_(settings.defaultTargetCpa);
+    var margin = row.marginPercent === "" || row.marginPercent == null ? toNumber_(settings.defaultMarginPercent) : toNumber_(row.marginPercent);
+    row.targetRoas = margin > 0 && margin <= 100 ? 100 / margin : "";
+  }
+}
 
 function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
   var header = buildProductTypesHeader_(sheet, maxLevels, settings);
@@ -2549,7 +2571,7 @@ function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
 
   clearManagedProductTypesSheet_(sheet, output.length, output[0].length);
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
-  formatProductTypesSheet_(sheet, output.length, header);
+  formatProductTypesSheet_(sheet, output.length, header, settings);
   if (rows.length > 0) {
     var rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(true).build();
     sheet.getRange(2, 1, rows.length, 1).setDataValidation(rule);
@@ -2564,7 +2586,7 @@ function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
 function buildProductTypesHeader_(sheet, maxLevels, settings) {
   var fixed = ["Вмикаємо"];
   for (var i = 1; i <= maxLevels; i++) fixed.push("product_type_l" + i);
-  fixed.push("benchmark_label", "priority_label", "winter", "spring", "summer", "autumn", "path_key", "path_depth", "has_season_rule");
+  fixed.push("benchmark_label", "priority_label", "winter", "spring", "summer", "autumn", "target_cpa", "target_roas", "margin_percent", "path_key", "path_depth", "has_season_rule");
 
 
   var defaultTail = [
@@ -2572,8 +2594,8 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
     "conversions_30d",
     "spend_30d",
     "actual_cpa_30d",
+    "actual_roas_30d",
     "conversion_value_30d",
-    "target_cpa",
     "comment"
   ];
 
@@ -2581,7 +2603,7 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
   var tail = [];
   if (sheet.getLastRow() >= 1 && sheet.getLastColumn() > fixed.length) {
     var currentHeader = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    for (var c = fixed.length; c < currentHeader.length; c++) {
+    for (var c = 0; c < currentHeader.length; c++) {
       var name = safeTrim_(currentHeader[c]);
       if (!name || isProductTypesFixedHeader_(name, maxLevels)) continue;
       if (tail.indexOf(name) < 0) tail.push(name);
@@ -2594,11 +2616,14 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
   }
 
 
-  return fixed.concat(tail);
+  tail = tail.filter(function(name) { return name !== "comment" && name !== "actual_roas_30d"; });
+  tail.splice(tail.indexOf("actual_cpa_30d") + 1, 0, "actual_roas_30d");
+  return fixed.concat(tail, ["comment"]);
 }
 
 
 function isProductTypesFixedHeader_(name, maxLevels) {
+  if (["target_cpa", "target_roas", "margin_percent"].indexOf(name) >= 0) return true;
   if (name === "Вмикаємо") return true;
   if (isValidFeedCustomLabelHeader_(name) || name === "benchmark_label" || name === "benchmark_group" || name === "priority_label" || name === "priority_group") return true;
   if (["winter", "spring", "summer", "autumn", "path_key", "path_depth", "has_season_rule"].indexOf(name) >= 0) return true;
@@ -2674,12 +2699,15 @@ function getProductTypesRowValue_(header, rowData, displayPath, maxLevels, rowNu
   if (header === "actual_cpa_30d") return round2_(rowData.cpa30d);
   if (header === "conversion_value_30d") return round2_(rowData.conversionValue30d);
   if (header === "target_cpa") return rowData.targetCpa;
+  if (header === "target_roas") return rowData.targetRoas;
+  if (header === "margin_percent") return rowData.marginPercent;
+  if (header === "actual_roas_30d") return rowData.actualRoas;
   if (header === "comment") return rowData.comment;
   return "";
 }
 
 
-function formatProductTypesSheet_(sheet, rowCount, header) {
+function formatProductTypesSheet_(sheet, rowCount, header, settings) {
   if (rowCount <= 0 || !header || header.length === 0) return;
 
 
@@ -2701,9 +2729,23 @@ function formatProductTypesSheet_(sheet, rowCount, header) {
     if (firstSeasonCol > 0) sheet.getRange(2, firstSeasonCol, rowCount - 1, 4).setBackground(MANUAL_BACKGROUND);
     if (targetCpaCol > 0) sheet.getRange(2, targetCpaCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
     if (commentCol > 0) sheet.getRange(2, commentCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
-    applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol);
+    applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol, settings);
+    var marginCol = findHeaderIndex_(header, "margin_percent") + 1;
+    sheet.getRange(2, marginCol, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND).setNumberFormat('0.00"%"');
+    var roasCol = findHeaderIndex_(header, "actual_roas_30d") + 1;
+    var targetRoasCol = findHeaderIndex_(header, "target_roas") + 1;
+    sheet.getRange(2, roasCol, rowCount - 1, 1).setNumberFormat("0.00%");
+    sheet.getRange(2, targetRoasCol, rowCount - 1, 1).setNumberFormat("0.00%");
+    var actuals = sheet.getRange(2, roasCol, rowCount - 1, 1).getValues();
+    var targets = sheet.getRange(2, targetRoasCol, rowCount - 1, 1).getValues();
+    sheet.getRange(2, roasCol, rowCount - 1, 1).setBackgrounds(actuals.map(function(value, i) {
+      var target = toNumber_(targets[i][0]);
+      var actual = toNumber_(value[0]);
+      return [value[0] === "" || target <= 0 || actual === target ? "#ffffff" : (actual > target ? GOOD_BACKGROUND : BAD_LIGHT_BACKGROUND)];
+    }));
   }
   if (benchmarkLabelCol > 0) sheet.showColumns(benchmarkLabelCol, 5);
+  sheet.showColumns(targetCpaCol, 3);
   ["path_key", "path_depth", "has_season_rule"].forEach(function(name) {
     var col = findHeaderIndex_(header, name) + 1;
     if (col > 0) sheet.hideColumns(col);
@@ -2712,7 +2754,7 @@ function formatProductTypesSheet_(sheet, rowCount, header) {
 }
 
 
-function applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol) {
+function applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCpaCol, settings) {
   if (rowCount <= 1 || actualCpaCol <= 0 || targetCpaCol <= 0) return;
   var cpaValues = sheet.getRange(2, actualCpaCol, rowCount - 1, 1).getValues();
   var targetValues = sheet.getRange(2, targetCpaCol, rowCount - 1, 1).getValues();
@@ -2720,6 +2762,7 @@ function applyProductTypesCpaHighlights_(sheet, rowCount, actualCpaCol, targetCp
   for (var i = 0; i < cpaValues.length; i++) {
     var actualCpa = toNumber_(cpaValues[i][0]);
     var targetCpa = toNumber_(targetValues[i][0]);
+    if (targetCpa <= 0) targetCpa = toNumber_(settings && settings.defaultTargetCpa);
     var bg = "#ffffff";
     if (targetCpa > 0 && actualCpa > 0) {
       bg = actualCpa > targetCpa ? BAD_LIGHT_BACKGROUND : GOOD_BACKGROUND;
@@ -2783,7 +2826,7 @@ function buildProductTypePriorityRulesFromRows_(rows, maxLevels) {
 function buildProductTypeTargetCpaRulesFromRows_(rows, maxLevels) {
   var rules = [];
   for (var i = 0; i < rows.length; i++) {
-    var targetCpa = toNumber_(rows[i].targetCpa);
+    var targetCpa = rows[i].effectiveTargetCpa == null ? toNumber_(rows[i].targetCpa) : rows[i].effectiveTargetCpa;
     if (targetCpa <= 0) continue;
     var path = normalizePathToFilledLevels_(rows[i].path, maxLevels);
     var depth = getPathDepth_(path, maxLevels);
@@ -3049,9 +3092,9 @@ function buildSeasonalityCategoryFormula_(settings, seasonName, rowNumber, maxLe
   var productTypesSheet = quoteSheetNameForFormula_(settings.productTypesSheetName);
   var seasonOffset = { winter: 0, spring: 1, summer: 2, autumn: 3 }[seasonName] || 0;
   var seasonCol = columnLetter_(maxLevels + 4 + seasonOffset);
-  var pathKeyCol = columnLetter_(maxLevels + 8);
-  var pathDepthCol = columnLetter_(maxLevels + 9);
-  var hasRuleCol = columnLetter_(maxLevels + 10);
+  var pathKeyCol = columnLetter_(maxLevels + 11);
+  var pathDepthCol = columnLetter_(maxLevels + 12);
+  var hasRuleCol = columnLetter_(maxLevels + 13);
   var prefixesFormula = buildSeasonalityPathPrefixesFormula_(rowNumber, maxLevels);
 
 
