@@ -11,7 +11,7 @@ for (const enabled of [false, true]) {
   const calls = [];
   const state = {
     settings: { enableSeasonalityFilter: enabled, maxLevels: 5 },
-    sheets: { seasonality: {} }, outputRows: [], seasonalityMap: {},
+    sheets: { seasonality: {} }, outputRows: [], seasonalityMap: {}, productTypeSeasonalityRules: [],
     Logger: { log() {} }, writeSeasonalitySheet_: (...args) => calls.push(args)
   };
   vm.runInNewContext(scriptSource.slice(seasonalityWriteStart, seasonalityWriteEnd), state);
