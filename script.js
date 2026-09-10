@@ -173,7 +173,7 @@ function runUnifiedProductControl() {
   Logger.log("Reading client priority state...");
   var priorityMap = readPrioritiesMap_(sheets.priorities);
   if (!settings.enableSeasonalityFilter) {
-    Logger.log("Seasonality rules disabled in Settings; sheet will still be rebuilt for setup.");
+    Logger.log("Seasonality rules disabled in Settings; sheet write will be skipped.");
   }
   var funnelMap = {};
   if (settings.enableFunnelBuilder || settings.enableQuarantine) {
@@ -225,9 +225,13 @@ function runUnifiedProductControl() {
   Logger.log("Products rows built: " + outputRows.length);
   if (!settings.enableProductDiagnostics || Number(settings.productDiagnosticsStartRow) > 1) writeQuarantineLifecycle_(sheets.productDiagnostics, outputRows, settings.maxLevels);
 
-  Logger.log("Writing Seasonality sheet...");
-  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
-  Logger.log("Seasonality sheet written.");
+  if (settings.enableSeasonalityFilter) {
+    Logger.log("Writing Seasonality sheet...");
+    writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings, productTypeSeasonalityRules);
+    Logger.log("Seasonality sheet written.");
+  } else {
+    Logger.log("Запис Seasonality пропущено: сезонність вимкнена.");
+  }
 
 
   if (settings.enableProductsWrite) {
@@ -3225,7 +3229,7 @@ function readSeasonalityManualStateMap_(sheet) {
 }
 
 
-function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settings) {
+function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settings, categoryRules) {
   var header = ["id", "title", "product_type_full_path"];
   for (var i = 1; i <= maxLevels; i++) header.push("product_type_l" + i);
   header.push(
@@ -3258,7 +3262,8 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
     var manual = manualMap[normOfferId_(offerId)] || {};
     var outputIndexes = getOutputRowIndexes_(maxLevels);
     var fullPath = normalizeProductType_(productRow[outputIndexes.productTypeFullPath]);
-    var sheetRow = p + 2;
+    var category = chooseProductTypeSeasonalityRule_([fullPath], categoryRules || [], maxLevels) || {};
+    var hasManual = !!manual.manualWinter || !!manual.manualSpring || !!manual.manualSummer || !!manual.manualAutumn;
     var row = [offerId, productRow[1] || "", fullPath];
     for (var level = 0; level < maxLevels; level++) row.push(productRow[outputIndexes.productTypeLevelStart + level] || "");
     row.push(
@@ -3266,25 +3271,16 @@ function writeSeasonalitySheet_(sheet, productRows, manualMap, maxLevels, settin
       !!manual.manualSpring,
       !!manual.manualSummer,
       !!manual.manualAutumn,
-      buildSeasonalityCategoryFormula_(settings, "winter", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "spring", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "summer", sheetRow, maxLevels),
-      buildSeasonalityCategoryFormula_(settings, "autumn", sheetRow, maxLevels)
+      !!category.winter,
+      !!category.spring,
+      !!category.summer,
+      !!category.autumn
     );
-    var categoryWinterCol = columnLetter_(findHeaderIndex_(header, "category_winter") + 1);
-    var categorySpringCol = columnLetter_(findHeaderIndex_(header, "category_spring") + 1);
-    var categorySummerCol = columnLetter_(findHeaderIndex_(header, "category_summer") + 1);
-    var categoryAutumnCol = columnLetter_(findHeaderIndex_(header, "category_autumn") + 1);
-    var manualWinterCol = columnLetter_(findHeaderIndex_(header, "manual_winter") + 1);
-    var manualSpringCol = columnLetter_(findHeaderIndex_(header, "manual_spring") + 1);
-    var manualSummerCol = columnLetter_(findHeaderIndex_(header, "manual_summer") + 1);
-    var manualAutumnCol = columnLetter_(findHeaderIndex_(header, "manual_autumn") + 1);
-    var hasManualFormula = "OR(" + manualWinterCol + sheetRow + "=TRUE," + manualSpringCol + sheetRow + "=TRUE," + manualSummerCol + sheetRow + "=TRUE," + manualAutumnCol + sheetRow + "=TRUE)";
     row.push(
-      "=IF(" + hasManualFormula + "," + manualWinterCol + sheetRow + "=TRUE," + categoryWinterCol + sheetRow + "=TRUE)",
-      "=IF(" + hasManualFormula + "," + manualSpringCol + sheetRow + "=TRUE," + categorySpringCol + sheetRow + "=TRUE)",
-      "=IF(" + hasManualFormula + "," + manualSummerCol + sheetRow + "=TRUE," + categorySummerCol + sheetRow + "=TRUE)",
-      "=IF(" + hasManualFormula + "," + manualAutumnCol + sheetRow + "=TRUE," + categoryAutumnCol + sheetRow + "=TRUE)",
+      hasManual ? !!manual.manualWinter : !!category.winter,
+      hasManual ? !!manual.manualSpring : !!category.spring,
+      hasManual ? !!manual.manualSummer : !!category.summer,
+      hasManual ? !!manual.manualAutumn : !!category.autumn,
       manual.comment || ""
     );
     output.push(row);
