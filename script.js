@@ -225,9 +225,13 @@ function runUnifiedProductControl() {
   Logger.log("Products rows built: " + outputRows.length);
   if (!settings.enableProductDiagnostics || Number(settings.productDiagnosticsStartRow) > 1) writeQuarantineLifecycle_(sheets.productDiagnostics, outputRows, settings.maxLevels);
 
-  Logger.log("Writing Seasonality sheet...");
-  writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
-  Logger.log("Seasonality sheet written.");
+  if (settings.enableSeasonalityFilter) {
+    Logger.log("Writing Seasonality sheet...");
+    writeSeasonalitySheet_(sheets.seasonality, outputRows, seasonalityMap, settings.maxLevels, settings);
+    Logger.log("Seasonality sheet written.");
+  } else {
+    Logger.log("Запис Seasonality пропущено: сезонність вимкнена.");
+  }
 
 
   if (settings.enableProductsWrite) {

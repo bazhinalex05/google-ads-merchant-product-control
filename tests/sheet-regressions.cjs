@@ -3,6 +3,21 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const ctx = { Logger: { log() {} }, SpreadsheetApp: { flush() {} } };
+const scriptSource = fs.readFileSync(path.join(__dirname, '..', 'script.js'), 'utf8');
+const seasonalityWriteStart = scriptSource.indexOf('  if (settings.enableSeasonalityFilter) {');
+const seasonalityWriteEnd = scriptSource.indexOf('  if (settings.enableProductsWrite)', seasonalityWriteStart);
+assert.ok(seasonalityWriteStart >= 0 && seasonalityWriteEnd > seasonalityWriteStart);
+for (const enabled of [false, true]) {
+  const calls = [];
+  const state = {
+    settings: { enableSeasonalityFilter: enabled, maxLevels: 5 },
+    sheets: { seasonality: {} }, outputRows: [], seasonalityMap: {},
+    Logger: { log() {} }, writeSeasonalitySheet_: (...args) => calls.push(args)
+  };
+  vm.runInNewContext(scriptSource.slice(seasonalityWriteStart, seasonalityWriteEnd), state);
+  assert.equal(calls.length, enabled ? 1 : 0);
+  if (enabled) assert.equal(calls[0][0], state.sheets.seasonality);
+}
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'script.js'), 'utf8'), ctx);
 
