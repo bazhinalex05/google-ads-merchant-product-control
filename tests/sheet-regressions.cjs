@@ -117,8 +117,8 @@ assert.equal(colors[9], colors[11]);
 assert.notEqual(colors[11], colors[12]);
 let diagnosticsWrites = [];
 const diagnosticsSheet = {
-  clearContents() {},
-  getRange(r, c) { return { setValues(v) { diagnosticsWrites.push({ r, v }); }, setNumberFormat() {} }; }
+  getLastRow: () => 0, getLastColumn: () => 0, getMaxColumns: () => 100, getMaxRows: () => 1000,
+  getRange(r, c) { return { setValues(v) { diagnosticsWrites.push({ r, v }); return this; }, setNumberFormat() { return this; }, setNote() { return this; }, setDataValidation() { return this; }, setBackground() { return this; } }; }
 };
 const internalRow = Array.from({ length: 77 }, (_, i) => i);
 internalRow[76] = '08.09.2026';
@@ -129,7 +129,7 @@ assert.equal(writtenHeader.indexOf('last_quarantine_exit_date'), writtenHeader.i
 assert.equal(writtenRow[writtenHeader.indexOf('last_quarantine_exit_date')], '08.09.2026');
 assert.equal(writtenRow.length, writtenHeader.length);
 const readBack = ctx.readDashboardSourceFromDiagnostics_({ getLastRow: () => 2, getLastColumn: () => writtenHeader.length,
-  getRange(r) { return { getValues: () => r === 1 ? [writtenHeader] : [writtenRow] }; }
+  getRange(r, c = 1, h = 1, w = writtenHeader.length) { return { getValues: () => [(r === 1 ? writtenHeader : writtenRow).slice(c - 1, c - 1 + w)], getDisplayValues() { return this.getValues().map(row => row.map(String)); } }; }
 }, { maxLevels: 5 });
 assert.equal(JSON.stringify(readBack.outputRows[0]), JSON.stringify(internalRow));
 let removed = 0;
