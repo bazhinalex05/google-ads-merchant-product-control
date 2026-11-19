@@ -50,16 +50,17 @@ const manualHeader = ['enabled', 'product_type_l1', 'product_type_l2', 'product_
 const manualData = [[true, 'Root', '', '', '', '', 200, 5, 30, 'keep'], [true, '', 'A', '', '', '', '', 100/30, '', 'child']];
 const manualSheet = {
   getLastRow: () => 3, getLastColumn: () => manualHeader.length,
-  getRange(row) { return { getValues: () => row === 1 ? [manualHeader] : manualData, getFormulas: () => [[''], ['=100/30']] }; }
+  getRange(row) { return { getValues: () => row === 1 ? [manualHeader] : manualData, getFormulas: () => [[''], ['=100/30']], getRichTextValues: () => [[null], [null, { getLinkUrl: () => 'https://example.com/category-a' }]] }; }
 };
 const manual = ctx.readProductTypeManualStateMap_(manualSheet, 5, {});
 assert.equal(manual.Root.manualTargetRoas, 5);
 assert.equal(manual['Root|||A'].manualTargetRoas, '');
 assert.equal(manual.Root.comment, 'keep');
+assert.equal(manual['Root|||A'].categoryUrl, 'https://example.com/category-a');
 
 let written;
 const range = { setValues(value) { written = value; return this; }, setNumberFormat() { return this; }, setDataValidation() { return this; } };
-const outputSheet = { clearContents() {}, getRange() { return range; }, getLastRow: () => 0, getLastColumn: () => 0 };
+const outputSheet = { clearContents() {}, getRange() { return range; }, getLastRow: () => 0, getLastColumn: () => 0, getMaxColumns: () => 26, insertColumnsAfter(c,n) { assert.equal(c,26); assert.equal(n,2); } };
 ctx.formatSeasonalitySheet_ = () => {};
 const idx = ctx.getOutputRowIndexes_(5);
 const row = Array(76).fill('');
@@ -133,7 +134,11 @@ const readBack = ctx.readDashboardSourceFromDiagnostics_({ getLastRow: () => 2, 
 assert.equal(JSON.stringify(readBack.outputRows[0]), JSON.stringify(internalRow));
 let removed = 0;
 ctx.SpreadsheetApp.ProtectionType = { SHEET: 'SHEET', RANGE: 'RANGE' };
-ctx.removeProtectionsForSheet_({ getProtections() { return [{ canEdit: () => true, remove() { removed++; } }]; } });
+ctx.removeProtectionsForSheet_({ getProtections() { return [
+  { getDescription: () => 'Seasonality category formulas', canEdit: () => true, remove() { removed++; } },
+  { getDescription: () => 'User protection', canEdit: () => true, remove() { throw new Error('User protection changed'); } },
+  { getDescription: () => 'Seasonality final formulas', canEdit: () => false, remove() { throw new Error('Not editable'); } }
+]; } });
 assert.equal(removed, 2);
 console.log('PASS: diagnostics date placement, header grouping, dashboard roundtrip, protection removal');
 
@@ -169,7 +174,7 @@ assert.equal(ctx.findExternalProductTypeMatch_('123_copy_more', external, [], ['
 assert.equal(ctx.findExternalProductTypeMatch_('FX123', external, ['FX']).matchId, '123');
 console.log('PASS: exact, prefix, suffix, combined matching and end-only suffix removal');
 const freshHeader = ctx.buildProductTypesHeader_({ getLastRow: () => 0 }, 5, {});
-assert.equal(JSON.stringify(freshHeader.slice(18)), JSON.stringify(['actual_cpa_30d', 'actual_roas_30d', 'aov', 'conversions_30d', 'spend_30d', 'conversion_value_30d', 'comment']));
+assert.equal(JSON.stringify(freshHeader.slice(18)), JSON.stringify(['actual_cpa_30d', 'actual_roas_30d', 'aov', 'conversions_30d', 'spend_30d', 'conversion_value_30d', 'clicks_30d', 'cr_30d', 'category_url', 'comment']));
 const oldHeader = freshHeader.slice(0, 18).concat(['aov', 'conversions_30d', 'spend_30d', 'actual_cpa_30d', 'actual_roas_30d', 'conversion_value_30d', 'comment']);
 const rebuiltHeader = ctx.buildProductTypesHeader_({ getLastRow: () => 2, getLastColumn: () => oldHeader.length, getRange: () => ({ getValues: () => [oldHeader] }) }, 5, {});
 assert.equal(JSON.stringify(rebuiltHeader), JSON.stringify(freshHeader));
