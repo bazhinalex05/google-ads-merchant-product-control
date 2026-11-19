@@ -33,20 +33,7 @@ class Sheet {
   }}
 }
 
-// Settings: false, zero, formulas, unknown keys and positions survive; retry after partial migration is idempotent.
-const settingsSheet = new Sheet([['key','value','comment'],['priority_label_field','none','manual comment'],['merchant_id','=A99','keep'],['custom',0,'keep'],['enable_products_write',false,'keep']]);
-settingsSheet.hidden.add(3);
-const original = structuredClone(settingsSheet.data);
-const template=[['key','value','comment'],['merchant_id','placeholder','new'],['priority_label_field','none','new'],['enable_products_output',true,'new'],['enable_products_write',true,'new']];
-settingsSheet.failValidation=true;
-assert.throws(()=>ctx.migrateSettingsInPlace_(settingsSheet,template),/injected/);
-ctx.migrateSettingsInPlace_(settingsSheet,template);
-ctx.migrateSettingsInPlace_(settingsSheet,template);
-assert.deepEqual(settingsSheet.data.slice(0,original.length),original);
-assert.equal(settingsSheet.data.length,6);
-assert.ok(settingsSheet.hidden.has(3));
-assert.ok(settingsSheet.validations['6,2']);
-assert.ok(settingsSheet.validations['2,2'].options.includes('product_types_sheet'));
+// Settings block migration is covered by settings-migration.cjs.
 
 // Source precedence: none cannot touch any source, sheet mode never falls back to Priorities/Merchant.
 const product={normId:'a',offerId:'a',productTypes:['Root > Child'],priorityGroup:'merchant'};

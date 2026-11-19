@@ -582,26 +582,101 @@ function writeSettingsTemplate_(sheet, settings) {
 }
 
 function migrateSettingsInPlace_(sheet, rows) {
-  var existing = sheet.getDataRange().getValues();
-  var keys = {};
-  existing.forEach(function(row) { keys[safeTrim_(row[0])] = true; });
-  var missing = rows.filter(function(row, i) {
-    return i > 0 && row[0].substring(0, 2) !== "--" && !keys[row[0]];
-  });
-  if (missing.length) {
-    var start = sheet.getLastRow() + 1;
-    if (start + missing.length - 1 > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), start + missing.length - 1 - sheet.getMaxRows());
-    sheet.getRange(start, 1, missing.length, 3).setValues(missing);
-  }
-  // Повторний запуск відновлює validation навіть після збою між записом і оформленням.
   var values = sheet.getDataRange().getValues();
-  var boolKeys = {};
-  rows.forEach(function(row) { if (typeof row[1] === "boolean") boolKeys[row[0]] = true; });
+  var keys = values.map(function(row) { return safeTrim_(row[0]); });
+  var notes = sheet.getRange(1, 1, values.length, 1).getNotes().map(function(row) { return row[0]; });
+  var canonical = rows.map(function(row) { return safeTrim_(row[0]); });
+  // Не обирати довільне значення за дубльованого ключа.
+  canonical.slice(1).forEach(function(key) {
+    if (keys.indexOf(key) !== keys.lastIndexOf(key)) throw new Error("SETTINGS_DUPLICATE_KEY: " + key);
+  });
+  var anchor = 0;
+  for (var i = 1; i < rows.length; i++) {
+    var key = canonical[i];
+    var current = keys.indexOf(key);
+    var pendingNote = "UMPC_SETTINGS_PENDING:" + key;
+    var pending = notes.indexOf(pendingNote);
+    if (pending >= 0 && current >= 0 && pending !== current) throw new Error("SETTINGS_PENDING_CONFLICT: " + key);
+    if (current < 0 && pending >= 0) {
+      if (!sheet.getRange(pending + 1, 1, 1, sheet.getMaxColumns()).isBlank()) throw new Error("SETTINGS_PENDING_CONFLICT: " + key);
+      formatInsertedSettingRow_(sheet, pending + 1, rows[i]);
+      sheet.getRange(pending + 1, 1, 1, 3).setValues([rows[i]]);
+      keys[pending] = key;
+      current = pending;
+    }
+    if (pending >= 0) {
+      sheet.getRange(pending + 1, 1).clearNote();
+      notes[pending] = "";
+    }
+    var boundary = keys.length;
+    for (var j = i + 1; j < canonical.length; j++) {
+      var next = keys.indexOf(canonical[j]);
+      if (next > anchor && next < boundary) boundary = next;
+    }
+    if (current > anchor && current < boundary) {
+      anchor = current;
+      continue;
+    }
+    var destination = boundary < keys.length ? boundary : anchor + 1;
+    if (current >= 0) {
+      // Переміщується цілий рядок, а не значення: формули, нотатки,
+      // validation і користувацьке оформлення залишаються з параметром.
+      sheet.moveRows(sheet.getRange(current + 1, 1, 1, sheet.getMaxColumns()), destination + 1);
+      keys.splice(current, 1);
+      var movedNote = notes.splice(current, 1)[0];
+      if (current < destination) destination--;
+      keys.splice(destination, 0, key);
+      notes.splice(destination, 0, movedNote);
+    } else {
+      if (destination >= sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+      else sheet.insertRowsBefore(destination + 1, 1);
+      keys.splice(destination, 0, key);
+      notes.splice(destination, 0, pendingNote);
+      sheet.getRange(destination + 1, 1).setNote(pendingNote);
+      // Ключ записується останнім: після збою незавершений рядок не
+      // сприймається як готовий параметр. Старі рядки не очищаються.
+      formatInsertedSettingRow_(sheet, destination + 1, rows[i]);
+      sheet.getRange(destination + 1, 1, 1, 3).setValues([rows[i]]);
+      sheet.getRange(destination + 1, 1).clearNote();
+      notes[destination] = "";
+    }
+    anchor = destination;
+  }
+  // Відновити відсутні validation без зміни існуючих значень або формул.
   var boolRule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
-  values.forEach(function(row, i) {
-    if (boolKeys[safeTrim_(row[0])] && !sheet.getRange(i + 1, 2).getDataValidation()) sheet.getRange(i + 1, 2).setDataValidation(boolRule);
+  rows.forEach(function(row) {
+    var index = keys.indexOf(safeTrim_(row[0]));
+    if (index >= 0 && typeof row[1] === "boolean" && !sheet.getRange(index + 1, 2).getDataValidation()) sheet.getRange(index + 1, 2).setDataValidation(boolRule);
   });
   updatePrioritySettingsValidations_(sheet);
+}
+
+function formatInsertedSettingRow_(sheet, rowNumber, row) {
+  var key = safeTrim_(row[0]);
+  var range = sheet.getRange(rowNumber, 1, 1, 3);
+  range.clearDataValidations().setNumberFormat("General");
+  range.setBackground("#ffffff").setFontWeight("normal").setFontColor("#000000");
+  if (key.substring(0, 2) === "--") {
+    range.setBackground(SECTION_BACKGROUND).setFontWeight("bold");
+    return;
+  }
+  var cell = sheet.getRange(rowNumber, 2);
+  if (!isSettingsServiceKey_(key)) cell.setBackground(MANUAL_BACKGROUND);
+  if (isRequiredSetupSetting_(key)) sheet.getRange(rowNumber, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
+  if (key === "spend_to_price_threshold" || key === "target_cpa_excess_threshold") cell.setNumberFormat("0%");
+  var rule = null;
+  if (typeof row[1] === "boolean") rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+  if (["product_type_custom_label_field", "funnel_stage_output_attribute", "priority_output_attribute"].indexOf(key) >= 0) {
+    var labels = ["custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"];
+    if (key === "priority_output_attribute") labels.unshift("none");
+    rule = SpreadsheetApp.newDataValidation().requireValueInList(labels, true).setAllowInvalid(false).build();
+  }
+  if (key === "benchmark_label_field" || key === "priority_label_field") {
+    var options = getBenchmarkLabelFieldOptions_();
+    if (key === "priority_label_field") options = ["none", "product_types_sheet"].concat(options);
+    rule = SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(true).build();
+  }
+  if (rule) cell.setDataValidation(rule);
 }
 
 function updatePrioritySettingsValidations_(sheet) {
