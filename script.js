@@ -451,6 +451,7 @@ function readSettings_(ss) {
   defaults.benchmarkLabelField = readSettingString_(map, "benchmark_label_field", defaults.benchmarkLabelField);
   defaults.priorityLabelField = readSettingString_(map, "priority_label_field", defaults.priorityLabelField);
   defaults.funnelStageOutputAttribute = readSettingString_(map, "funnel_stage_output_attribute", defaults.funnelStageOutputAttribute);
+  defaults.quarantineOutputAttribute = readSettingString_(map, "quarantine_output_attribute", defaults.funnelStageOutputAttribute);
   defaults.priorityOutputAttribute = readSettingString_(map, "priority_output_attribute", defaults.priorityOutputAttribute);
   defaults.defaultBenchmarkGroup = readSettingString_(map, "default_benchmark_group", defaults.defaultBenchmarkGroup);
   defaults.excludeLastDays = readSettingInt_(map, "exclude_last_days", defaults.excludeLastDays);
@@ -511,6 +512,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand, title або назва custom attribute. Benchmark потрібен для розрахунку і діагностики, не для запису в допфід."],
     ["priority_label_field", settings.priorityLabelField, "product_types_sheet = тільки лист ProductTypes (не Merchant product_type), найближче непорожнє правило категорії; без правила порожньо. none = не читати priority. Інші значення: Priorities → ProductTypes → Merchant → other."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
+    ["quarantine_output_attribute", settings.quarantineOutputAttribute || settings.funnelStageOutputAttribute, "Куди писати мітку Карантин: custom_label_0..custom_label_4. Може збігатися з funnel_stage_output_attribute: Карантин має пріоритет над етапом. Не може збігатися з priority_output_attribute."],
     ["priority_output_attribute", settings.priorityOutputAttribute, "none = не писати priority; custom_label_0..custom_label_4 = вихідне поле. Якщо стара п’ята колонка ще містить дані, публікація з none призупиняється до окремого рішення щодо міграції."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не чіпати."],
     ["-- 5. Сезонність --", "", ""],
@@ -669,7 +671,7 @@ function formatInsertedSettingRow_(sheet, rowNumber, row) {
   if (key === "spend_to_price_threshold" || key === "target_cpa_excess_threshold") cell.setNumberFormat("0%");
   var rule = null;
   if (typeof row[1] === "boolean") rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
-  if (["product_type_custom_label_field", "funnel_stage_output_attribute", "priority_output_attribute"].indexOf(key) >= 0) {
+  if (["product_type_custom_label_field", "funnel_stage_output_attribute", "quarantine_output_attribute", "priority_output_attribute"].indexOf(key) >= 0) {
     var labels = ["custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"];
     if (key === "priority_output_attribute") labels.unshift("none");
     rule = SpreadsheetApp.newDataValidation().requireValueInList(labels, true).setAllowInvalid(false).build();
@@ -686,6 +688,7 @@ function updatePrioritySettingsValidations_(sheet) {
   var values = sheet.getDataRange().getValues();
   values.forEach(function(row, i) {
     var key = safeTrim_(row[0]);
+    if (key === "quarantine_output_attribute") sheet.getRange(i + 1, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
     if (key !== "priority_label_field" && key !== "priority_output_attribute") return;
     var options = key === "priority_label_field" ? ["none", "product_types_sheet"].concat(getBenchmarkLabelFieldOptions_()) : ["none", "custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"];
     sheet.getRange(i + 1, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(key === "priority_label_field").build());
@@ -744,7 +747,7 @@ function formatSettingsTemplate_(sheet, rows) {
     if (typeof rows[r][1] === "boolean") {
       sheet.getRange(r + 1, 2).setDataValidation(boolRule);
     }
-    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute" || settingKey === "priority_output_attribute") {
+    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute" || settingKey === "quarantine_output_attribute" || settingKey === "priority_output_attribute") {
       sheet.getRange(r + 1, 2).setDataValidation(customLabelRule);
     } else if (settingKey === "benchmark_label_field" || settingKey === "priority_label_field") {
       sheet.getRange(r + 1, 2).setDataValidation(benchmarkSourceRule);
@@ -830,6 +833,7 @@ function isRequiredSetupSetting_(key) {
     "benchmark_label_field",
     "priority_label_field",
     "funnel_stage_output_attribute",
+    "quarantine_output_attribute",
     "priority_output_attribute"
   ].indexOf(key) >= 0;
 }
@@ -1003,6 +1007,9 @@ function validateRuntimeSettings_(settings) {
   if (!isValidFeedCustomLabelHeader_(settings.funnelStageOutputAttribute)) {
     throw new Error("funnel_stage_output_attribute має бути custom_label_0..custom_label_4.");
   }
+  if (!isValidFeedCustomLabelHeader_(getQuarantineOutputAttribute_(settings))) {
+    throw new Error("quarantine_output_attribute має бути custom_label_0..custom_label_4.");
+  }
   if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() !== "none" && !isValidFeedCustomLabelHeader_(settings.priorityOutputAttribute)) {
     throw new Error("priority_output_attribute має бути none або custom_label_0..custom_label_4.");
   }
@@ -1010,7 +1017,10 @@ function validateRuntimeSettings_(settings) {
     throw new Error("priority_label_field має бути custom_label_0..custom_label_4 або назвою custom attribute.");
   }
   if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() === safeTrim_(settings.funnelStageOutputAttribute).toLowerCase()) {
-    throw new Error("priority_output_attribute не може збігатися з funnel_stage_output_attribute.");
+    throw new Error("Перевір Settings: priority_output_attribute і funnel_stage_output_attribute вказують на одну custom label. Вибери різні мітки; розрахунок зупинено.");
+  }
+  if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() === getQuarantineOutputAttribute_(settings)) {
+    throw new Error("Перевір Settings: priority_output_attribute і quarantine_output_attribute вказують на одну custom label. Вибери різні мітки; розрахунок зупинено.");
   }
 
   if (settings.targetCpaLookbackDays < 1) {
@@ -3978,11 +3988,27 @@ function writeProductsSheet_(sheet, rows, settings) {
     sheet.getDataRange().clearContent();
     return "DISABLED_EMPTY";
   }
-  if (!shouldWriteProductsPriorityLabel_(settings) && sheet.getLastColumn() >= 5) {
+  var includePriorityLabel = shouldWriteProductsPriorityLabel_(settings);
+  var quarantineField = getQuarantineOutputAttribute_(settings);
+  var labelHeaders = [safeTrim_(settings.funnelStageOutputAttribute).toLowerCase()];
+  if (includePriorityLabel) labelHeaders.push(safeTrim_(settings.priorityOutputAttribute).toLowerCase());
+  if (labelHeaders.indexOf(quarantineField) < 0) labelHeaders.push(quarantineField);
+  var quarantineColumnIndex = 3 + labelHeaders.indexOf(quarantineField);
+  if (!includePriorityLabel && sheet.getLastColumn() >= 5) {
     var legacy = sheet.getRange(1, 5, Math.max(sheet.getLastRow(), 1), 1).getValues();
-    if (legacy.some(function(row) { return row[0] !== ""; })) {
+    var isCurrentQuarantineColumn = labelHeaders.length === 2 && safeTrim_(legacy[0][0]).toLowerCase() === quarantineField &&
+      legacy.slice(1).every(function(row) { return row[0] === "" || row[0] === "Карантин"; });
+    if (!isCurrentQuarantineColumn && legacy.some(function(row) { return row[0] !== ""; })) {
       Logger.log("PRODUCTS_PRIORITY_MIGRATION_REQUIRED: Products не оновлено. Старий підключений допфід продовжує передавати priority! Потрібне окреме рішення щодо міграції; none ще не застосовано до фіда. Аналітика продовжується.");
       return "PRIORITY_MIGRATION_REQUIRED";
+    }
+  }
+  var outputColCount = 3 + labelHeaders.length;
+  if (sheet.getLastColumn() > outputColCount) {
+    var extra = sheet.getRange(1, outputColCount + 1, Math.max(sheet.getLastRow(), 1), sheet.getLastColumn() - outputColCount).getValues();
+    if (extra.some(function(row) { return row.some(function(value) { return value !== ""; }); })) {
+      Logger.log("PRODUCTS_LAYOUT_MIGRATION_REQUIRED: Products не оновлено; зайві заповнені колонки потребують окремого рішення щодо міграції.");
+      return "LAYOUT_MIGRATION_REQUIRED";
     }
   }
   if (!rows || rows.length === 0) {
@@ -3991,7 +4017,6 @@ function writeProductsSheet_(sheet, rows, settings) {
   }
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var output = [];
-  var includePriorityLabel = shouldWriteProductsPriorityLabel_(settings);
 
 
   for (var r = 0; r < rows.length; r++) {
@@ -3999,19 +4024,21 @@ function writeProductsSheet_(sheet, rows, settings) {
       rows[r][idx.id],
       rows[r][idx.shopping],
       rows[r][idx.display],
-      rows[r][idx.quarantineActive] === "YES" ? "Карантин — " + rows[r][idx.quarantineReasons] : rows[r][idx.funnelStage] || ""
+      rows[r][idx.funnelStage] || ""
     ];
     if (includePriorityLabel) outRow.push(rows[r][idx.priorityLabel] || (isExclusivePrioritySource_(settings) ? "" : "other"));
+    while (outRow.length < outputColCount) outRow.push("");
+    if (rows[r][idx.quarantineActive] === "YES") outRow[quarantineColumnIndex] = "Карантин";
     output.push(outRow);
   }
 
 
-  var outputColCount = includePriorityLabel ? 5 : 4;
 
 
   sheet.getRange(1, 1, 1, 3).setValues([["id", "excluded_destination", "excluded_destination"]]);
   writeProductsFunnelHeader_(sheet, settings);
   writeProductsPriorityHeader_(sheet, settings, includePriorityLabel);
+  sheet.getRange(1, quarantineColumnIndex + 1).setValue(quarantineField);
   writeRowsInChunks_(sheet, 2, 1, output, settings.writeChunkSize, "Products");
   clearProductsTailAfterWrite_(sheet, output.length, outputColCount);
 
@@ -4032,6 +4059,10 @@ function clearProductsTailAfterWrite_(sheet, writtenRows, clearWidth) {
   }
 }
 
+
+function getQuarantineOutputAttribute_(settings) {
+  return safeTrim_(settings.quarantineOutputAttribute || settings.funnelStageOutputAttribute).toLowerCase();
+}
 
 function writeProductsFunnelHeader_(sheet, settings) {
   var cell = sheet.getRange(1, 4);

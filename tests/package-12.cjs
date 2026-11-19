@@ -69,6 +69,13 @@ for(const [output,write,status,count] of [[true,true,'WRITTEN',2],[true,true,'PR
 }
 
 // Source precedence: none cannot touch any source, sheet mode never falls back to Priorities/Merchant.
+const labelValidation=source.slice(source.indexOf('  if (!isValidFeedCustomLabelHeader_(settings.funnelStageOutputAttribute))'),source.indexOf('  if (settings.targetCpaLookbackDays < 1)'));
+const validateLabels=settings=>vm.runInNewContext(labelValidation,{settings,isValidFeedCustomLabelHeader_:ctx.isValidFeedCustomLabelHeader_,getQuarantineOutputAttribute_:ctx.getQuarantineOutputAttribute_,safeTrim_:ctx.safeTrim_,isExclusivePrioritySource_:ctx.isExclusivePrioritySource_,isAllowedBenchmarkLabelField_:ctx.isAllowedBenchmarkLabelField_});
+assert.throws(()=>validateLabels({funnelStageOutputAttribute:'custom_label_0',priorityOutputAttribute:'custom_label_0',priorityLabelField:'none',quarantineOutputAttribute:'custom_label_0'}),/priority_output_attribute.*funnel_stage_output_attribute/);
+for(const quarantineOutputAttribute of ['custom_label_0','custom_label_1','custom_label_2','custom_label_3','custom_label_4']) validateLabels({funnelStageOutputAttribute:'custom_label_0',priorityOutputAttribute:'none',priorityLabelField:'none',quarantineOutputAttribute});
+assert.throws(()=>validateLabels({funnelStageOutputAttribute:'custom_label_0',priorityOutputAttribute:'custom_label_4',priorityLabelField:'none',quarantineOutputAttribute:'custom_label_4'}),/priority_output_attribute.*quarantine_output_attribute/);
+validateLabels({funnelStageOutputAttribute:'custom_label_0',priorityOutputAttribute:'custom_label_4',priorityLabelField:'none',quarantineOutputAttribute:'custom_label_0'});
+assert.throws(()=>validateLabels({funnelStageOutputAttribute:'custom_label_0',priorityOutputAttribute:'custom_label_4',priorityLabelField:'none',quarantineOutputAttribute:'none'}),/quarantine_output_attribute/);
 const product={normId:'a',offerId:'a',productTypes:['Root > Child'],priorityGroup:'merchant'};
 const rules=ctx.buildProductTypePriorityRulesFromRows_([{path:['Root'],priorityLabel:'parent'},{path:['Root','Child'],priorityLabel:'child'}],5);
 const bomb=new Proxy({}, {get(){throw Error('priority source read')}});
@@ -108,8 +115,48 @@ const idx=ctx.getOutputRowIndexes_(5);
 const quarantined=build(q);
 assert.equal(quarantined[0][idx.shopping],'');
 const feed=new Sheet();assert.equal(ctx.writeProductsSheet_(feed,quarantined,settings),'WRITTEN');
-assert.equal(feed.data[1][0],'a');assert.equal(feed.data[1][3],'Карантин — NO_SALES, TARGET_CPA');
+assert.equal(feed.data[1][0],'a');assert.equal(feed.data[1][3],'Карантин');
+assert.equal(quarantined[0][idx.quarantineReasons],'NO_SALES, TARGET_CPA');
+for(const reasons of ['NO_SALES','SPEND_OVER_MARGIN','EXPENSIVE_CLICK','TARGET_CPA','NO_SALES, SPEND_OVER_MARGIN, EXPENSIVE_CLICK, TARGET_CPA']) {
+  const reasonRows=build({a:{reasons,activeUntil:'25.11.2026'}});
+  const reasonFeed=new Sheet();
+  ctx.writeProductsSheet_(reasonFeed,reasonRows,settings);
+  assert.equal(reasonFeed.data[1][3],'Карантин');
+  assert.equal(reasonRows[0][idx.quarantineReasons],reasons);
+}
 assert.equal(feed.data[0].length,4);
+// All five selectable destinations: quarantine wins over the funnel; priority collisions are rejected above.
+for(let destination=0;destination<5;destination++) {
+  for(const priorityOutputAttribute of ['none','custom_label_4']) {
+    if(priorityOutputAttribute==='custom_label_'+destination) continue;
+    const options={...settings,priorityOutputAttribute,quarantineOutputAttribute:'custom_label_'+destination};
+    const scenarioRows=build(q,options);
+    scenarioRows[0][idx.funnelStage]='regular-stage';
+    scenarioRows[0][idx.priorityLabel]='regular-priority';
+    const routed=new Sheet();
+    assert.equal(ctx.writeProductsSheet_(routed,scenarioRows,options),'WRITTEN');
+    const headers=routed.data[0];
+    const column=headers.indexOf(options.quarantineOutputAttribute);
+    assert.ok(column>=3);
+    assert.equal(routed.data[1][column],'Карантин');
+    assert.equal(headers.filter(h=>h===options.quarantineOutputAttribute).length,1);
+    assert.equal(scenarioRows[0][idx.quarantineReasons],'NO_SALES, TARGET_CPA');
+    assert.equal(scenarioRows[0][idx.priorityLabel],'regular-priority');
+    if(options.quarantineOutputAttribute!==options.funnelStageOutputAttribute) assert.equal(routed.data[1][3],'regular-stage');
+    assert.equal(ctx.writeProductsSheet_(routed,scenarioRows,options),'WRITTEN');
+    const released=build({},options);
+    released[0][idx.funnelStage]='normal-stage';
+    released[0][idx.priorityLabel]='normal-priority';
+    assert.equal(ctx.writeProductsSheet_(routed,released,options),'WRITTEN');
+    assert.equal(routed.data[1][column],options.quarantineOutputAttribute===options.funnelStageOutputAttribute?'normal-stage':options.quarantineOutputAttribute===priorityOutputAttribute?'normal-priority':'');
+  }
+}
+// Returning to a shared label never silently leaves an old dedicated quarantine column published.
+const dedicated=new Sheet();
+ctx.writeProductsSheet_(dedicated,quarantined,{...settings,priorityOutputAttribute:'custom_label_4',quarantineOutputAttribute:'custom_label_1'});
+const dedicatedBefore=structuredClone(dedicated.data);
+assert.equal(ctx.writeProductsSheet_(dedicated,quarantined,{...settings,priorityOutputAttribute:'custom_label_4'}),'LAYOUT_MIGRATION_REQUIRED');
+assert.deepEqual(dedicated.data,dedicatedBefore);
 ctx.writeProductsSheet_(feed,build({}),settings);assert.ok(!feed.data[1][3].startsWith('Карантин'));
 const restricted=build(q,{...settings,enableProductTypeFilter:true});
 assert.equal(restricted[0][idx.shopping],'Shopping_Ads');

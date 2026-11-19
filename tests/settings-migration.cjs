@@ -94,6 +94,13 @@ assert.equal(row(incomplete,'custom_setting').values[1],'KEEP');
 assert.equal(row(incomplete,'priority_output_attribute').validation[2].kind,'list');
 assert.ok(row(incomplete,'priority_output_attribute').validation[2].values.includes('none'));
 assert.ok(row(incomplete,'priority_label_field').validation[2].values.includes('product_types_sheet'));
+assert.deepEqual(row(incomplete,'quarantine_output_attribute').validation[2].values,['custom_label_0','custom_label_1','custom_label_2','custom_label_3','custom_label_4']);
+assert.equal(row(incomplete,'quarantine_output_attribute').values[1],defaults.funnelStageOutputAttribute);
+assert.equal(position(incomplete,'quarantine_output_attribute'),position(incomplete,'funnel_stage_output_attribute')+1);
+assert.equal(row(incomplete,'quarantine_output_attribute').style.background1,ctx.REQUIRED_SETTING_BACKGROUND);
+row(incomplete,'quarantine_output_attribute').style.background1='white';
+ctx.migrateSettingsInPlace_(incomplete,template);
+assert.equal(row(incomplete,'quarantine_output_attribute').style.background1,ctx.REQUIRED_SETTING_BACKGROUND);
 assert.equal(row(incomplete,'-- 3. Увімкнення функцій --').style.background1,ctx.SECTION_BACKGROUND);
 
 // Restart at every write boundary. No duplicate parameter or lost old data; pending formatted row is reused.
