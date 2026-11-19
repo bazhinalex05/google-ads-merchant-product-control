@@ -241,9 +241,10 @@ function runUnifiedProductControl() {
   }
 
 
+  var productsStatus = settings.enableProductsOutput === false ? "DISABLED_EMPTY" : "SKIPPED_WRITE_DISABLED";
   if (settings.enableProductsWrite) {
     Logger.log("Writing Products sheet...");
-    var productsStatus = writeProductsSheet_(sheets.products, outputRows, settings);
+    productsStatus = writeProductsSheet_(sheets.products, outputRows, settings);
     Logger.log("Products status: " + productsStatus);
   } else if (settings.enableProductsOutput !== false) {
     ensureProductsSheetHasFeedRows_(sheets.products);
@@ -284,7 +285,7 @@ function runUnifiedProductControl() {
   } else {
     Logger.log("Захист листів пропущено через enable_sheet_protection=false.");
   }
-  logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings);
+  logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings, productsStatus);
 }
 
 
@@ -2876,6 +2877,7 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
 
 
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var pathKeyIndex = findHeaderIndex_(header, "path_key");
   var targetCpaIndex = findHeaderIndex_(header, "target_cpa");
   var marginIndex = findHeaderIndex_(header, "margin_percent");
   var targetRoasIndex = findHeaderIndex_(header, "target_roas");
@@ -2900,7 +2902,12 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
-    applySparsePathRow_(currentPath, row, 1, maxLevels);
+    var savedKey = pathKeyIndex >= 0 ? safeTrim_(row[pathKeyIndex]) : "";
+    if (savedKey) {
+      currentPath = savedKey.split("|||");
+    } else {
+      applySparsePathRow_(currentPath, row, 1, maxLevels);
+    }
     var key = buildPathKey_(currentPath, maxLevels);
     if (!key) continue;
     result[key] = {
@@ -5317,13 +5324,14 @@ function addDashboardPieChart_(sheet, posRow, posCol, title, dataRow, labelCol, 
 }
 
 
-function logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings) {
+function logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings, productsStatus) {
   Logger.log("Unified summary");
   Logger.log("Merchant products: " + merchantProducts.length);
   Logger.log("ProductTypes rows: " + productTypeRows.length);
   Logger.log("Funnel stats products: " + Object.keys(funnelMap).length);
   Logger.log("Quarantine active products: " + Object.keys(quarantineState.activeById || {}).length);
-  Logger.log("Products rows written: " + outputRows.length);
+  Logger.log("Products write status: " + productsStatus);
+  Logger.log("Products rows written: " + (productsStatus === "WRITTEN" ? outputRows.length : 0));
   Logger.log("Product type filter enabled: " + settings.enableProductTypeFilter);
   Logger.log("Funnel Builder enabled: " + settings.enableFunnelBuilder);
   Logger.log("Quarantine enabled: " + settings.enableQuarantine);

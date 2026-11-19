@@ -23,6 +23,7 @@ class Sheet {
     getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>s.data[r-1+i]?.[c-1+j]??'')),
     getDisplayValues(){return this.getValues()},
     getFormulas(){return this.getValues().map(row=>row.map(v=>typeof v==='string'&&v.startsWith('=')?v:''))},
+    getRichTextValues(){return this.getValues().map(row=>row.map(()=>null))},
     setValues(v){s.writes++;v.forEach((row,i)=>{s.data[r-1+i]??=[];row.forEach((value,j)=>s.data[r-1+i][c-1+j]=value)});return this},
     setValue(v){return this.setValues([[v]])},
     clearContent(){return this.setValues(Array.from({length:h},()=>Array(w).fill('')))},
@@ -34,6 +35,38 @@ class Sheet {
 }
 
 // Settings block migration is covered by settings-migration.cjs.
+
+// Reproduce live regression: sorted sparse rows must retain their manual state by stored path_key.
+const categoryHeader=['checked','product_type_l1','product_type_l2','product_type_l3','product_type_l4','product_type_l5','benchmark_label','priority_label','winter','spring','summer','autumn','target_cpa','target_roas','margin_percent','path_key','category_url','comment'];
+const categoryRows=[
+  [true,'Root','','','','','benchmark-parent','parent',true,false,false,false,350,'=1/0','', 'Root','https://example.com/root','parent-note'],
+  [false,'','Child','','','','benchmark-child','child',false,true,false,true,450,4,25,'Root|||Child','https://example.com/child','child-note'],
+  [true,'Other','','','','','','other',false,false,true,false,700,5,20,'Other','https://example.com/other','other-note']
+];
+const manual=rows=>plain(ctx.readProductTypeManualStateMap_(new Sheet([categoryHeader,...rows]),5,{}));
+const manualBefore=manual(categoryRows);
+const sortedRows=[categoryRows[1],categoryRows[0],categoryRows[2]];
+assert.deepEqual(manual(sortedRows),manualBefore);
+assert.equal(manual(sortedRows)['Root|||Child'].targetCpa,'450');
+assert.equal(manual(sortedRows)['Root|||Child'].manualTargetRoas,4);
+assert.equal(manualBefore.Root.manualTargetRoas,'');
+// Existing tables without path_key, or blank keys, still use the legacy ordered sparse path.
+assert.deepEqual(manual(categoryRows.map(r=>r.map((v,i)=>i===15?'':v))),manualBefore);
+const legacyHeader=categoryHeader.filter((_,i)=>i!==15);
+const legacyRows=categoryRows.map(r=>r.filter((_,i)=>i!==15));
+assert.deepEqual(plain(ctx.readProductTypeManualStateMap_(new Sheet([legacyHeader,...legacyRows]),5,{})),manualBefore);
+
+// Summary must report actual publication, including all skip paths of the main function.
+const writeBlock=source.slice(source.indexOf('  var productsStatus ='),source.indexOf('  if (settings.enableProductDiagnostics) {',source.indexOf('  var productsStatus =')));
+for(const [output,write,status,count] of [[true,true,'WRITTEN',2],[true,true,'PRIORITY_MIGRATION_REQUIRED',0],[false,true,'DISABLED_EMPTY',0],[false,false,'DISABLED_EMPTY',0],[true,false,'SKIPPED_WRITE_DISABLED',0]]) {
+  const env={settings:{enableProductsOutput:output,enableProductsWrite:write},sheets:{products:{}},outputRows:[[],[]],Logger:{log(){}},writeProductsSheet_:()=>status,ensureProductsSheetHasFeedRows_(){}};
+  vm.runInNewContext(writeBlock,env);
+  assert.equal(env.productsStatus,status);
+  logs.length=0;
+  ctx.logUnifiedSummary_([],[],{}, {activeById:{}},env.outputRows,env.settings,env.productsStatus);
+  assert.ok(logs.includes('Products rows written: '+count));
+  assert.ok(logs.includes('Products write status: '+status));
+}
 
 // Source precedence: none cannot touch any source, sheet mode never falls back to Priorities/Merchant.
 const product={normId:'a',offerId:'a',productTypes:['Root > Child'],priorityGroup:'merchant'};
