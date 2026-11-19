@@ -8,8 +8,10 @@ class Sheet{
  getLastColumn(){return Math.max(0,...this.data.map(r=>{let n=r.length;while(n&&(r[n-1]===''||r[n-1]==null))n--;return n}))}
  getMaxColumns(){return this.maxCols} getMaxRows(){return this.maxRows}
  insertColumnsAfter(c,n){this.maxCols+=n} insertRowsAfter(r,n){this.maxRows+=n}
+ moveColumns(range,destination){const c=range.getColumn()-1;this.data.forEach(row=>{while(row.length<=c)row.push('');row.splice(destination-1,0,row.splice(c,1)[0])});this.moves=(this.moves||0)+1}
  getDataRange(){return this.getRange(1,1,Math.max(1,this.getLastRow()),Math.max(1,this.getLastColumn()))}
  getRange(r,c,h=1,w=1){const s=this;return {
+ getColumn:()=>c,
  getValues:()=>Array.from({length:h},(_,i)=>Array.from({length:w},(_,j)=>s.data[r+i-1]?.[c+j-1]??'')),
  getDisplayValues(){return this.getValues().map(row=>row.map(String))},
  setValues(values){values.forEach((row,i)=>{s.data[r+i-1]??=[];row.forEach((v,j)=>s.data[r+i-1][c+j-1]=v)});return this},
@@ -78,15 +80,21 @@ const feed=new Sheet();ctx.writeProductsSheet_(feed,rows,settings);assert.equal(
 assert.equal(build({...settings,enableProductTypeFilter:true})[0][idx.shopping],'Shopping_Ads');
 assert.equal(build({...settings,enableSeasonalityFilter:true},{'sku-a':{manualWinter:true}})[0][idx.shopping],'Shopping_Ads');
 
-// New checkbox is appended; legacy indexes/attribution shape remain unchanged. State follows normalized ID.
+// Checkbox is physically next to ID; internal attribution shape remains unchanged.
 const diag=new Sheet();ctx.writeProductDiagnosticsSheet_(diag,rows,settings);
-assert.equal(diag.data[0].at(-1),'quarantine_exempt');assert.equal(diag.data[1].at(-1),true);
+assert.deepEqual(Array.from(diag.data[0].slice(0,3)),['id','quarantine_exempt','title']);assert.equal(diag.data[1][1],true);
+assert.equal(diag.moves,undefined);
 assert.equal(rows[0].length,ctx.getDiagnosticsSourceHeader_(5).length);
 assert.equal(ctx.readDashboardSourceFromDiagnostics_(diag,settings).outputRows[0].length,rows[0].length);
 const normalized=new Sheet([['id','quarantine_exempt'],[' SKU-A ',true],['sku-b',false]]);
 assert.equal(ctx.readQuarantineExemptions_(normalized)['sku-a'],true);
 const rowB=Array.from(rows[0]);rowB[0]='sku-b';
 const snapshot=ctx.readQuarantineExemptions_(diag);
+const legacy=new Sheet([['id','title','user_formula','quarantine_exempt'],['SKU-A','Title','=1+2',true],['sku-b','Other','=3+4',false]]);
+const legacyHeader=legacy.data[0].slice();ctx.positionQuarantineExemptionColumn_(legacy,legacyHeader);
+assert.deepEqual(legacy.data,[['id','quarantine_exempt','title','user_formula'],['SKU-A',true,'Title','=1+2'],['sku-b',false,'Other','=3+4']]);
+ctx.positionQuarantineExemptionColumn_(legacy,legacyHeader);assert.equal(legacy.moves,1);
+assert.equal(ctx.readQuarantineExemptions_(legacy)['sku-a'],true);
 // Add an unrelated formula column; full and partial writes must not overwrite it.
 diag.data[0].push('user_formula');diag.data[1].push('=1+2');const customCol=diag.data[0].indexOf('user_formula');
 ctx.writeProductDiagnosticsSheet_(diag,[rowB,rows[0]],{...settings,quarantineExemptById:snapshot});

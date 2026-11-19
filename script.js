@@ -2066,6 +2066,13 @@ function formatQuarantineExemptionColumn_(sheet, header, rowCount) {
   sheet.getRange(2, col, rowCount - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build()).setBackground(MANUAL_BACKGROUND);
 }
 
+function positionQuarantineExemptionColumn_(sheet, header) {
+  var index = findHeaderIndex_(header, "quarantine_exempt");
+  if (index < 0 || index === 1) return;
+  sheet.moveColumns(sheet.getRange(1, index + 1, sheet.getMaxRows(), 1), 2);
+  header.splice(1, 0, header.splice(index, 1)[0]);
+}
+
 function writeQuarantineExemptionFlags_(sheet, exemptions) {
   var lastRow = sheet.getLastRow();
   if (!lastRow) return;
@@ -2077,6 +2084,8 @@ function writeQuarantineExemptionFlags_(sheet, exemptions) {
     if (sheet.getMaxColumns() < col) sheet.insertColumnsAfter(sheet.getMaxColumns(), col - sheet.getMaxColumns());
     sheet.getRange(1, col).setValue("quarantine_exempt");
   }
+  positionQuarantineExemptionColumn_(sheet, header);
+  col = findHeaderIndex_(header, "quarantine_exempt") + 1;
   var idCol = findHeaderIndex_(header, "id") + 1;
   if (lastRow > 1 && idCol) {
     var ids = sheet.getRange(2, idCol, lastRow - 1, 1).getDisplayValues();
@@ -4194,12 +4203,14 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
   if (!header.length) {
     header = sourceHeader.slice();
     header.splice(header.indexOf("quarantine_reasons") + 1, 0, header.pop());
+    header.splice(1, 0, "quarantine_exempt");
   } else {
     sourceHeader.forEach(function(name) { if (findHeaderIndex_(header, name) < 0) header.push(name); });
   }
   if (findHeaderIndex_(header, "quarantine_exempt") < 0) header.push("quarantine_exempt");
   if (sheet.getMaxColumns() < header.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), header.length - sheet.getMaxColumns());
   if (header.length > oldWidth) sheet.getRange(1, oldWidth + 1, 1, header.length - oldWidth).setValues([header.slice(oldWidth)]);
+  positionQuarantineExemptionColumn_(sheet, header);
   var startDataRow = Math.max(1, Number(settings.productDiagnosticsStartRow) || 1);
   var rowsToWrite = rows.slice(startDataRow - 1).map(function(row) {
     return row.concat([exemptions[normOfferId_(row[0])] === true]);
