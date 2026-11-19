@@ -83,6 +83,7 @@ function runUnifiedProductControl() {
 
 
   Logger.log("Preparing sheets...");
+  var quarantineSheets = prepareQuarantineSheets_(ss, settings);
   var sheets = {
     products: getOrCreateSheet_(ss, settings.productsSheetName),
     dashboard: getOrCreateSheet_(ss, settings.dashboardSheetName),
@@ -91,8 +92,8 @@ function runUnifiedProductControl() {
     seasonality: getOrCreateSheet_(ss, settings.seasonalitySheetName),
     priorities: getOrCreatePrioritiesSheet_(ss, settings),
     productDiagnostics: getOrCreateSheet_(ss, settings.productDiagnosticsSheetName),
-    quarantineRegistry: getOrCreateSheet_(ss, settings.quarantineRegistrySheetName),
-    quarantineLog: getOrCreateSheet_(ss, settings.quarantineLogSheetName)
+    quarantineRegistry: quarantineSheets.active,
+    quarantineLog: quarantineSheets.history
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
   ensurePrioritiesSheet_(sheets.priorities, settings);
@@ -306,8 +307,8 @@ function readSettings_(ss) {
     seasonalitySheetName: "Seasonality",
     prioritySheetName: "Priorities",
     productDiagnosticsSheetName: "ProductDiagnostics",
-    quarantineRegistrySheetName: "QuarantineRegistry",
-    quarantineLogSheetName: "QuarantineLog",
+    quarantineRegistrySheetName: "Quarantine Active Now",
+    quarantineLogSheetName: "Quarantine History",
     settingsSheetName: SETTINGS_SHEET_NAME,
     enableProductTypeFilter: true,
     enableFunnelBuilder: true,
@@ -527,7 +528,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 7.2 Загальні правила карантину --", "", ""],
     ["exclude_last_days", settings.excludeLastDays, "Останні N днів не враховуються для кліків без продажів, перевитрати та дорогого CPA. 2 = без сьогодні й учора. Дорогий клік завжди перевіряється за вчора."],
     ["problem_threshold", settings.problemThreshold, "З якого quarantine_count товар вважається проблемним."],
-    ["quarantine_log_max_rows", settings.quarantineLogMaxRows, "Скільки останніх подій залишати в QuarantineLog. 0 = не чистити лог."],
+    ["quarantine_log_max_rows", settings.quarantineLogMaxRows, "Скільки останніх подій залишати в Quarantine History. 0 = не чистити лог."],
     ["-- 7.3 Кліки без продажів --", "", ""],
     ["enable_no_sales_rule", settings.enableNoSalesRule, "true = включити правило 'кліки є, конверсій немає'."],
     ["clicks_threshold", settings.clicksThreshold, "Кліків більше цього значення і 0 конверсій = NO_SALES карантин."],
@@ -567,7 +568,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["merchant_api_page_size", settings.merchantApiPageSize, "Скільки товарів читати за один запит, напр. 1000. Не трогать."],
     ["merchant_api_retry_count", settings.merchantApiRetryCount, "Скільки разів повторювати тимчасові внутрішні помилки Merchant API."],
     ["merchant_api_retry_sleep_seconds", settings.merchantApiRetrySleepSeconds, "Базова пауза між повторними запитами Merchant API. Кожна наступна спроба чекає довше."],
-    ["reset_quarantine", settings.resetQuarantine, "УВАГА: true = на кожному запуску видаляти всю історію карантину з QuarantineRegistry, QuarantineLog і карантинні дані ProductDiagnostics. Поки галочка стоїть, нові карантини не призначаються. Цілі, сезони, пріоритети та інші причини виключення зберігаються. Для оновлення виключень у допфіді потрібен звичайний запуск із enable_products_write=true, не режим Dashboard із діагностики. Галочка не знімається автоматично: після тесту зніміть її вручну; історія почнеться заново."]
+    ["reset_quarantine", settings.resetQuarantine, "УВАГА: true = на кожному запуску видаляти всю історію карантину з Quarantine Active Now, Quarantine History і карантинні дані ProductDiagnostics. Поки галочка стоїть, нові карантини не призначаються. Цілі, сезони, пріоритети та інші причини виключення зберігаються. Для оновлення виключень у допфіді потрібен звичайний запуск із enable_products_write=true, не режим Dashboard із діагностики. Галочка не знімається автоматично: після тесту зніміть її вручну; історія почнеться заново."]
   ];
 
 
@@ -5188,6 +5189,52 @@ function getOrCreateSheet_(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
   return sheet;
+}
+
+function prepareQuarantineSheets_(ss, settings) {
+  var definitions = [
+    { key: "active", setting: "quarantineRegistrySheetName", legacy: "QuarantineRegistry", name: "Quarantine Active Now",
+      header: ["id", "quarantine_count", "reason_no_sales", "reason_spend_over_margin", "reason_expensive_click", "problematic", "active_until", "no_sales_until", "spend_until", "expensive_click_until", "last_added", "reason_target_cpa", "target_cpa_until"] },
+    { key: "history", setting: "quarantineLogSheetName", legacy: "QuarantineLog", name: "Quarantine History",
+      header: ["id", "quarantine_count", "last_added", "problematic"] }
+  ];
+  // Спочатку перевірити обидва імені; за конфлікту не змінювати жодного листа.
+  definitions.forEach(function(def) {
+    var configured = safeTrim_(settings[def.setting]) || def.name;
+    var custom = configured !== def.name && configured !== def.legacy;
+    var target = ss.getSheetByName(custom ? configured : def.name);
+    var legacy = ss.getSheetByName(def.legacy);
+    if (target && legacy && target.getSheetId() !== legacy.getSheetId()) {
+      throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: існують " + target.getName() + " та " + def.legacy + ". Дані не об'єднано; потрібно визначити робочий лист.");
+    }
+    def.sheet = target || legacy;
+    def.targetName = custom ? configured : def.name;
+    def.rename = !!legacy && !target;
+    if (!def.sheet) {
+      var candidates = ss.getSheets().filter(function(sheet) {
+        if (!sheet.getLastRow() || sheet.getLastColumn() < def.header.length) return false;
+        var header = sheet.getRange(1, 1, 1, def.header.length).getValues()[0];
+        return def.header.every(function(value, i) { return safeTrim_(header[i]) === value; });
+      });
+      if (candidates.length > 1) throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: кілька листів зі структурою " + def.name + ". Потрібно визначити робочий лист.");
+      if (candidates.length === 1) {
+        def.sheet = candidates[0];
+        Logger.log("Збережено користувацьке ім'я карантинного листа: " + def.sheet.getName());
+      }
+    }
+  });
+  if (definitions[0].sheet && definitions[1].sheet && definitions[0].sheet.getSheetId() === definitions[1].sheet.getSheetId()) {
+    throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: поточний карантин та історія не можуть використовувати один лист.");
+  }
+  if (definitions[0].targetName === definitions[1].targetName) throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: імена поточного карантину та історії мають відрізнятися.");
+  var result = {};
+  definitions.forEach(function(def) {
+    if (def.rename) def.sheet.setName(def.targetName);
+    if (!def.sheet) def.sheet = ss.insertSheet(def.targetName);
+    settings[def.setting] = def.sheet.getName();
+    result[def.key] = def.sheet;
+  });
+  return result;
 }
 
 
