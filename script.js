@@ -66,6 +66,7 @@ function runUnifiedProductControl() {
   Logger.log("Spreadsheet opened.");
   ensureSpreadsheetLocale_(ss);
   var settings = readSettings_(ss);
+  prepareManualProtectionMode_(ss, settings);
   Logger.log("Settings loaded. Fast switches: diagnostics=" + settings.enableProductDiagnostics +
     ", dashboardData=" + settings.enableDashboardData +
     ", dashboard=" + settings.enableDashboard +
@@ -97,7 +98,6 @@ function runUnifiedProductControl() {
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
   ensurePrioritiesSheet_(sheets.priorities, settings);
-  if (settings.enableSheetProtection) removeProtectionsForSheet_(sheets.seasonality);
   if (settings.enableProductsOutput === false) {
     sheets.products.getDataRange().clearContent();
     Logger.log("Products очищено: enable_products_output=false; аналітика працює.");
@@ -330,7 +330,7 @@ function readSettings_(ss) {
     enableDashboardFromDiagnostics: false,
     enableManagedSheetFormatting: true,
     enablePreviousStateRead: true,
-    enableSheetProtection: true,
+    enableSheetProtection: false,
     enableProductsWrite: true,
     enableProductsOutput: true,
     resetQuarantine: false,
@@ -563,7 +563,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["enable_dashboard_from_diagnostics", settings.enableDashboardFromDiagnostics, "true = будувати Dashboard з готового ProductDiagnostics без читання Merchant API. Це окремий режим лише для Dashboard та DashboardData: звичайний розрахунок товарів і карантинів не виконується. Потрібна вже заповнена діагностика; дані успадковують її актуальність."],
     ["enable_managed_sheet_formatting", settings.enableManagedSheetFormatting, "false = писати тільки значення і не запускати масове форматування службових листів. Не вимикає все оформлення: Settings, ProductTypes і Seasonality продовжують форматуватися; Dashboard має окрему логіку оформлення."],
     ["enable_previous_state_read", settings.enablePreviousStateRead, "false = не читати старий стан ProductDiagnostics/Products перед побудовою рядків. Виняток: ID товару, ознака карантину та дата останнього виходу з ProductDiagnostics читаються завжди, щоб визначити вихід і не враховувати старі витрати."],
-    ["enable_sheet_protection", settings.enableSheetProtection, "false = не оновлювати захист службових листів. Не знімає раніше встановлений захист інших листів. За true на Seasonality прибирається лише власний застарілий захист скрипта; чужий захист зберігається."],
+    ["enable_sheet_protection", settings.enableSheetProtection, "Типово false: автоматичних замків немає. true = запам'ятовувати ручні захисти листів і діапазонів та відновлювати видалені після запуску. false = забути збережений набір; наявні ручні захисти не видаляються. Щоб прибрати захист назавжди: вимкніть опцію, виконайте запуск і видаліть замок вручну."],
     ["enable_products_write", settings.enableProductsWrite, "false = не перезаписувати Products; корисно для окремого запуску діагностики або Dashboard. Наявний допфід залишається старим. У звичайному режимі порожній Products спричинить помилку; інші ввімкнені розрахунки та записи продовжуються."],
     ["write_chunk_size", settings.writeChunkSize, "Кількість рядків в одному setValues-блоці для великих листів, напр. 3000-10000. Застосовується до запису Products і повної ProductDiagnostics; це не розмір сторінки Merchant API."],
     ["product_diagnostics_start_row", settings.productDiagnosticsStartRow, "1 = писати ProductDiagnostics з початку. 110001 = дописати хвіст з цього рядка даних. Це номер рядка даних без заголовка, не продовження всього скрипта. Розрахунки виконуються заново; попередні рядки повної діагностики не оновлюються, крім трьох полів карантину. Не використовуйте для звичайного запуску."],
@@ -3576,7 +3576,6 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
     if (finalStartCol > 0) sheet.hideColumns(finalStartCol, 4);
   }
-  if (settings && settings.enableSheetProtection) removeProtectionsForSheet_(sheet);
   sheet.setFrozenRows(1);
 }
 
@@ -5516,28 +5515,159 @@ function hideDefaultBlankSheets_(ss, managedSheets) {
 
 
 function protectManagedSheets_(ss, settings) {
-  var openSheetNames = {};
-  openSheetNames[settings.productTypesSheetName] = true;
-  openSheetNames[settings.dashboardSheetName] = true;
-  openSheetNames[settings.dashboardDataSheetName] = true;
-  openSheetNames[settings.prioritySheetName] = true;
-  openSheetNames[settings.seasonalitySheetName] = true;
-  openSheetNames[settings.settingsSheetName || SETTINGS_SHEET_NAME] = true;
-  var ownerEmail = getProtectionOwnerEmail_();
+  if (!settings.enableSheetProtection) return;
+  var previous = readManualProtectionState_(ss);
+  var next = [];
   var sheets = ss.getSheets();
   for (var i = 0; i < sheets.length; i++) {
     var sheet = sheets[i];
-    if (openSheetNames[sheet.getName()]) {
-      removeUnifiedSheetProtections_(sheet);
-      continue;
+    var current = [];
+    ["SHEET", "RANGE"].forEach(function(type) {
+      sheet.getProtections(SpreadsheetApp.ProtectionType[type]).forEach(function(protection) {
+        if (!protection.canEdit()) throw new Error("Немає прав запам'ятати захист: " + sheet.getName());
+        current.push(readManualProtection_(sheet, protection, type));
+      });
+    });
+    var used = {};
+    previous.filter(function(item) { return item.sheetId === sheet.getSheetId(); }).forEach(function(item) {
+      // Match the description first (a manually moved range keeps its identity),
+      // then the location (a manually renamed protection replaces its old settings).
+      var match = -1;
+      for (var j = 0; j < current.length; j++) {
+        if (!used[j] && current[j].type === item.type && item.description && current[j].description === item.description) { match = j; break; }
+      }
+      if (match < 0) for (var k = 0; k < current.length; k++) {
+        if (!used[k] && current[k].type === item.type && current[k].range === item.range) { match = k; break; }
+      }
+      if (match >= 0) used[match] = true;
+      else {
+        restoreManualProtection_(sheet, item);
+        next.push(item);
+        Logger.log("Відновлено ручний захист: " + sheet.getName() + (item.range ? "!" + item.range : ""));
+      }
+    });
+    next = next.concat(current);
+  }
+  // Deleted sheets are not recreated. Only protections on existing sheets are remembered.
+  writeManualProtectionState_(ss, next);
+}
+
+function manualProtectionPrefix_(ss) { return "UMPC_MANUAL_PROTECTION_V1:" + ss.getId(); }
+
+function readManualProtectionState_(ss) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var pointer = props.getProperty(prefix);
+  if (!pointer) return [];
+  var manifest = JSON.parse(pointer);
+  var text = "";
+  for (var i = 0; i < manifest.count; i++) {
+    var part = props.getProperty(prefix + ":" + manifest.generation + ":" + i);
+    if (part === null) throw new Error("Неповний збережений набір ручних захистів.");
+    text += part;
+  }
+  return JSON.parse(text);
+}
+
+function writeManualProtectionState_(ss, items) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var previous = props.getProperty(prefix);
+  var generation = Utilities.getUuid();
+  var text = JSON.stringify(items);
+  var parts = {};
+  var count = Math.ceil(text.length / 2000);
+  for (var i = 0; i < count; i++) parts[prefix + ":" + generation + ":" + i] = text.slice(i * 2000, (i + 1) * 2000);
+  // Publish the pointer only after every chunk is saved; failed writes keep the old snapshot.
+  props.setProperties(parts);
+  props.setProperty(prefix, JSON.stringify({ generation: generation, count: count }));
+  if (previous) {
+    var old = JSON.parse(previous);
+    for (var j = 0; j < old.count; j++) props.deleteProperty(prefix + ":" + old.generation + ":" + j);
+  }
+}
+
+function forgetManualProtectionState_(ss) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var previous = props.getProperty(prefix);
+  props.deleteProperty(prefix);
+  if (previous) {
+    var old = JSON.parse(previous);
+    for (var i = 0; i < old.count; i++) props.deleteProperty(prefix + ":" + old.generation + ":" + i);
+  }
+}
+
+function prepareManualProtectionMode_(ss, settings) {
+  var props = PropertiesService.getScriptProperties();
+  var key = manualProtectionPrefix_(ss) + ":migrated";
+  if (!props.getProperty(key)) {
+    var legacy = false;
+    ss.getSheets().forEach(function(sheet) {
+      [SpreadsheetApp.ProtectionType.SHEET, SpreadsheetApp.ProtectionType.RANGE].forEach(function(type) {
+        sheet.getProtections(type).forEach(function(protection) {
+          if (["Unified Product Control: службовий лист", "Seasonality category formulas", "Seasonality final formulas"].indexOf(protection.getDescription()) < 0) return;
+          if (!protection.canEdit()) throw new Error("Немає прав зняти старий автоматичний захист: " + sheet.getName());
+          legacy = true;
+          protection.remove();
+        });
+      });
+    });
+    var settingsSheet = ss.getSheetByName(settings.settingsSheetName || SETTINGS_SHEET_NAME);
+    var rows = settingsSheet.getDataRange().getValues();
+    rows.forEach(function(row, index) {
+      if (safeTrim_(row[0]) !== "enable_sheet_protection") return;
+      var oldMode = String(row[2] || "").indexOf("false = не оновлювати захист службових листів") === 0;
+      if (legacy || oldMode) {
+        settings.enableSheetProtection = false;
+        settingsSheet.getRange(index + 1, 2).setValue(false);
+      }
+      settingsSheet.getRange(index + 1, 3).setValue("Типово false: автоматичних замків немає. true = запам'ятовувати ручні захисти та відновлювати видалені після запуску. false = забути збережений набір, не видаляючи ручних захистів. Для остаточного видалення: вимкніть опцію, виконайте запуск, видаліть замок вручну.");
+    });
+    props.setProperty(key, "true");
+    Logger.log("Режим ручних захистів підготовлено; старі автоматичні замки знято.");
+  }
+  if (!settings.enableSheetProtection) forgetManualProtectionState_(ss);
+  else protectManagedSheets_(ss, settings);
+}
+
+function readManualProtection_(sheet, protection, type) {
+  var warning = protection.isWarningOnly();
+  return {
+    sheetId: sheet.getSheetId(), type: type,
+    range: type === "RANGE" ? protection.getRange().getA1Notation() : "",
+    rangeName: type === "RANGE" ? protection.getRangeName() || "" : "",
+    description: protection.getDescription() || "", warning: warning,
+    editors: warning ? [] : protection.getEditors().map(function(user) { return user.getEmail(); }),
+    domain: warning ? false : protection.canDomainEdit(),
+    audiences: warning ? [] : protection.getTargetAudiences().map(function(audience) { return audience.getAudienceId(); }),
+    unprotected: type === "SHEET" ? protection.getUnprotectedRanges().map(function(range) { return range.getA1Notation(); }) : []
+  };
+}
+
+function restoreManualProtection_(sheet, item) {
+  var protection = item.type === "SHEET" ? sheet.protect() : sheet.getRange(item.range).protect();
+  try {
+    protection.setDescription(item.description);
+    if (item.rangeName) protection.setRangeName(item.rangeName);
+    if (item.type === "SHEET") protection.setUnprotectedRanges(item.unprotected.map(function(a1) { return sheet.getRange(a1); }));
+    protection.setWarningOnly(item.warning);
+    if (!item.warning) {
+      var me = getProtectionOwnerEmail_();
+      if (me) protection.addEditor(me);
+      var remove = protection.getEditors().filter(function(user) { return user.getEmail() !== me && item.editors.indexOf(user.getEmail()) < 0; });
+      if (remove.length) protection.removeEditors(remove);
+      if (item.editors.length) protection.addEditors(item.editors);
+      if (protection.canDomainEdit() !== item.domain) protection.setDomainEdit(item.domain);
+      protection.getTargetAudiences().forEach(function(audience) {
+        if (item.audiences.indexOf(audience.getAudienceId()) < 0) protection.removeTargetAudience(audience.getAudienceId());
+      });
+      item.audiences.forEach(function(id) { protection.addTargetAudience(id); });
     }
-    var editableRange = null;
-    if (sheet.getName() === settings.productDiagnosticsSheetName && sheet.getLastRow()) {
-      var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-      var col = findHeaderIndex_(header, "quarantine_exempt") + 1;
-      if (col && sheet.getMaxRows() > 1) editableRange = sheet.getRange(2, col, sheet.getMaxRows() - 1, 1);
-    }
-    ensureUnifiedSheetProtection_(sheet, ownerEmail, editableRange);
+  } catch (err) {
+    // A partial protection is not a successful restore and must not replace the saved settings.
+    if (protection.canEdit()) protection.remove();
+    throw err;
   }
 }
 
