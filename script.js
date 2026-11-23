@@ -66,6 +66,7 @@ function runUnifiedProductControl() {
   Logger.log("Spreadsheet opened.");
   ensureSpreadsheetLocale_(ss);
   var settings = readSettings_(ss);
+  prepareManualProtectionMode_(ss, settings);
   Logger.log("Settings loaded. Fast switches: diagnostics=" + settings.enableProductDiagnostics +
     ", dashboardData=" + settings.enableDashboardData +
     ", dashboard=" + settings.enableDashboard +
@@ -83,6 +84,7 @@ function runUnifiedProductControl() {
 
 
   Logger.log("Preparing sheets...");
+  var quarantineSheets = prepareQuarantineSheets_(ss, settings);
   var sheets = {
     products: getOrCreateSheet_(ss, settings.productsSheetName),
     dashboard: getOrCreateSheet_(ss, settings.dashboardSheetName),
@@ -91,12 +93,15 @@ function runUnifiedProductControl() {
     seasonality: getOrCreateSheet_(ss, settings.seasonalitySheetName),
     priorities: getOrCreatePrioritiesSheet_(ss, settings),
     productDiagnostics: getOrCreateSheet_(ss, settings.productDiagnosticsSheetName),
-    quarantineRegistry: getOrCreateSheet_(ss, settings.quarantineRegistrySheetName),
-    quarantineLog: getOrCreateSheet_(ss, settings.quarantineLogSheetName)
+    quarantineRegistry: quarantineSheets.active,
+    quarantineLog: quarantineSheets.history
   };
   ensureCoreSheetOrder_(ss, sheets.products, sheets.dashboard, sheets.dashboardData);
   ensurePrioritiesSheet_(sheets.priorities, settings);
-  removeProtectionsForSheet_(sheets.seasonality);
+  if (settings.enableProductsOutput === false) {
+    sheets.products.getDataRange().clearContent();
+    Logger.log("Products очищено: enable_products_output=false; аналітика працює.");
+  }
   Logger.log("Sheets ready.");
 
 
@@ -105,6 +110,8 @@ function runUnifiedProductControl() {
     // Runtime only: keep the user's saved quarantine switches unchanged.
     settings.enableQuarantine = false;
   }
+
+  settings.quarantineExemptById = readQuarantineExemptions_(sheets.productDiagnostics);
 
   if (settings.enableDashboardFromDiagnostics) {
     Logger.log("Dashboard from ProductDiagnostics mode enabled. Merchant API read skipped.");
@@ -155,7 +162,7 @@ function runUnifiedProductControl() {
     writeProductTypesSheet_(sheets.productTypes, productTypeRows, settings.maxLevels, settings);
     if (settings.enableProductTypeFilter) productTypeRules = buildAllowanceRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
-    productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
+    if (safeTrim_(settings.priorityLabelField).toLowerCase() !== "none") productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeTargetCpaRules = buildProductTypeTargetCpaRulesFromRows_(productTypeRows, settings.maxLevels);
     productTypeSeasonalityRules = buildProductTypeSeasonalityRulesFromRows_(productTypeRows, settings.maxLevels);
     enrichStatsWithMerchantData_(stats30Map, merchantMap, settings, productTypeBenchmarkRules);
@@ -163,7 +170,7 @@ function runUnifiedProductControl() {
   } else {
     productTypeRows = buildProductTypeTreeRows_(merchantProducts, manualStateMap, {}, settings.maxLevels);
     productTypeBenchmarkRules = buildProductTypeBenchmarkRulesFromRows_(productTypeRows, settings.maxLevels);
-    productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
+    if (safeTrim_(settings.priorityLabelField).toLowerCase() !== "none") productTypePriorityRules = buildProductTypePriorityRulesFromRows_(productTypeRows, settings.maxLevels);
     Logger.log("Прочитано категорійні benchmark і priority; статистика та перезапис ProductTypes пропущені.");
   }
 
@@ -171,7 +178,7 @@ function runUnifiedProductControl() {
   Logger.log("Reading Seasonality manual state...");
   var seasonalityMap = readSeasonalityManualStateMap_(sheets.seasonality);
   Logger.log("Reading client priority state...");
-  var priorityMap = readPrioritiesMap_(sheets.priorities);
+  var priorityMap = isExclusivePrioritySource_(settings) ? {} : readPrioritiesMap_(sheets.priorities);
   if (!settings.enableSeasonalityFilter) {
     Logger.log("Seasonality rules disabled in Settings; sheet write will be skipped.");
   }
@@ -223,7 +230,7 @@ function runUnifiedProductControl() {
     settings
   );
   Logger.log("Products rows built: " + outputRows.length);
-  if (!settings.enableProductDiagnostics || Number(settings.productDiagnosticsStartRow) > 1) writeQuarantineLifecycle_(sheets.productDiagnostics, outputRows, settings.maxLevels);
+  if (!settings.enableProductDiagnostics || Number(settings.productDiagnosticsStartRow) > 1) writeQuarantineLifecycle_(sheets.productDiagnostics, outputRows, settings.maxLevels, settings.quarantineExemptById);
 
   if (settings.enableSeasonalityFilter) {
     Logger.log("Writing Seasonality sheet...");
@@ -234,11 +241,12 @@ function runUnifiedProductControl() {
   }
 
 
+  var productsStatus = settings.enableProductsOutput === false ? "DISABLED_EMPTY" : "SKIPPED_WRITE_DISABLED";
   if (settings.enableProductsWrite) {
     Logger.log("Writing Products sheet...");
-    writeProductsSheet_(sheets.products, outputRows, settings);
-    Logger.log("Products sheet written.");
-  } else {
+    productsStatus = writeProductsSheet_(sheets.products, outputRows, settings);
+    Logger.log("Products status: " + productsStatus);
+  } else if (settings.enableProductsOutput !== false) {
     ensureProductsSheetHasFeedRows_(sheets.products);
     Logger.log("Запис листа Products пропущено через enable_products_write=false.");
   }
@@ -277,7 +285,7 @@ function runUnifiedProductControl() {
   } else {
     Logger.log("Захист листів пропущено через enable_sheet_protection=false.");
   }
-  logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings);
+  logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings, productsStatus);
 }
 
 
@@ -302,8 +310,8 @@ function readSettings_(ss) {
     seasonalitySheetName: "Seasonality",
     prioritySheetName: "Priorities",
     productDiagnosticsSheetName: "ProductDiagnostics",
-    quarantineRegistrySheetName: "QuarantineRegistry",
-    quarantineLogSheetName: "QuarantineLog",
+    quarantineRegistrySheetName: "Quarantine Active Now",
+    quarantineLogSheetName: "Quarantine History",
     settingsSheetName: SETTINGS_SHEET_NAME,
     enableProductTypeFilter: true,
     enableFunnelBuilder: true,
@@ -322,8 +330,9 @@ function readSettings_(ss) {
     enableDashboardFromDiagnostics: false,
     enableManagedSheetFormatting: true,
     enablePreviousStateRead: true,
-    enableSheetProtection: true,
+    enableSheetProtection: false,
     enableProductsWrite: true,
+    enableProductsOutput: true,
     resetQuarantine: false,
     writeChunkSize: 5000,
     productDiagnosticsStartRow: 1,
@@ -422,6 +431,7 @@ function readSettings_(ss) {
   defaults.enableManagedSheetFormatting = readSettingBool_(map, "enable_managed_sheet_formatting", defaults.enableManagedSheetFormatting);
   defaults.enablePreviousStateRead = readSettingBool_(map, "enable_previous_state_read", defaults.enablePreviousStateRead);
   defaults.enableSheetProtection = readSettingBool_(map, "enable_sheet_protection", defaults.enableSheetProtection);
+  defaults.enableProductsOutput = readSettingBool_(map, "enable_products_output", defaults.enableProductsOutput);
   defaults.enableProductsWrite = readSettingBool_(map, "enable_products_write", defaults.enableProductsWrite);
   defaults.resetQuarantine = readSettingBool_(map, "reset_quarantine", defaults.resetQuarantine);
   defaults.writeChunkSize = readSettingInt_(map, "write_chunk_size", defaults.writeChunkSize);
@@ -441,6 +451,7 @@ function readSettings_(ss) {
   defaults.benchmarkLabelField = readSettingString_(map, "benchmark_label_field", defaults.benchmarkLabelField);
   defaults.priorityLabelField = readSettingString_(map, "priority_label_field", defaults.priorityLabelField);
   defaults.funnelStageOutputAttribute = readSettingString_(map, "funnel_stage_output_attribute", defaults.funnelStageOutputAttribute);
+  defaults.quarantineOutputAttribute = readSettingString_(map, "quarantine_output_attribute", defaults.funnelStageOutputAttribute);
   defaults.priorityOutputAttribute = readSettingString_(map, "priority_output_attribute", defaults.priorityOutputAttribute);
   defaults.defaultBenchmarkGroup = readSettingString_(map, "default_benchmark_group", defaults.defaultBenchmarkGroup);
   defaults.excludeLastDays = readSettingInt_(map, "exclude_last_days", defaults.excludeLastDays);
@@ -490,6 +501,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["language_filter", settings.languageFilter, "Порожньо = всі мови. Кілька значень через кому, наприклад uk,en."],
     ["include_legacy_local_products", settings.includeLegacyLocalProducts, "false = не брати legacy local products; true = брати також локальні товари."],
     ["-- 3. Увімкнення функцій --", "", ""],
+    ["enable_products_output", settings.enableProductsOutput, "Формувати дані Products. false = очистити весь вміст Products; аналітика продовжує працювати. Має пріоритет над enable_products_write."],
     ["enable_product_type_filter", settings.enableProductTypeFilter, "true = використовувати галочки ProductTypes; false = не фільтрувати по категоріях."],
     ["enable_seasonality_filter", settings.enableSeasonalityFilter, "true = використовувати сезонність на листі Seasonality."],
     ["enable_funnel_builder", settings.enableFunnelBuilder, "true = рахувати Funnel Builder і писати підсумкову стадію в допфід Products."],
@@ -498,9 +510,10 @@ function writeSettingsTemplate_(sheet, settings) {
     ["funnel_days_ago", settings.funnelDaysAgo, "Період Funnel Builder у днях, включно з сьогодні. 14 = сьогодні + 13 попередніх днів."],
     ["enable_benchmark_grouping", settings.enableBenchmarkGrouping, "true = рахувати пороги окремо по custom label групах."],
     ["benchmark_label_field", settings.benchmarkLabelField, "Звідки читати групу порівняння з Merchant API: custom_label_0..custom_label_4, product_type, product_type_l1..product_type_l5, brand, title або назва custom attribute. Benchmark потрібен для розрахунку і діагностики, не для запису в допфід."],
-    ["priority_label_field", settings.priorityLabelField, "Звідки читати priority group з Merchant API, якщо її немає на листі Priorities або ProductTypes: custom_label_0..custom_label_4 або назва custom attribute."],
+    ["priority_label_field", settings.priorityLabelField, "product_types_sheet = тільки лист ProductTypes (не Merchant product_type), найближче непорожнє правило категорії; без правила порожньо. none = не читати priority. Інші значення: Priorities → ProductTypes → Merchant → other."],
     ["funnel_stage_output_attribute", settings.funnelStageOutputAttribute, "Куди писати Funnel Stage у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_2."],
-    ["priority_output_attribute", settings.priorityOutputAttribute, "Куди писати priority group у допфід Products. Формат тільки custom_label_0..custom_label_4, наприклад custom_label_4."],
+    ["quarantine_output_attribute", settings.quarantineOutputAttribute || settings.funnelStageOutputAttribute, "Куди писати мітку Карантин: custom_label_0..custom_label_4. Може збігатися з funnel_stage_output_attribute: Карантин має пріоритет над етапом. Не може збігатися з priority_output_attribute."],
+    ["priority_output_attribute", settings.priorityOutputAttribute, "none = не писати priority; custom_label_0..custom_label_4 = вихідне поле. Якщо стара п’ята колонка ще містить дані, публікація з none призупиняється до окремого рішення щодо міграції."],
     ["default_benchmark_group", settings.defaultBenchmarkGroup, "Група для товарів без benchmark label, напр. other. Не чіпати."],
     ["-- 5. Сезонність --", "", ""],
     ["active_season_winter", settings.activeSeasonWinter, "Увімкніть, щоб дозволити товари з позначеною зимою, зокрема примусово продовжити їх сезон незалежно від календаря. Діє лише з увімкненим фільтром сезонності; інші обмеження залишаються."],
@@ -520,7 +533,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["-- 7.2 Загальні правила карантину --", "", ""],
     ["exclude_last_days", settings.excludeLastDays, "Останні N днів не враховуються для кліків без продажів, перевитрати та дорогого CPA. 2 = без сьогодні й учора. Дорогий клік завжди перевіряється за вчора."],
     ["problem_threshold", settings.problemThreshold, "З якого quarantine_count товар вважається проблемним."],
-    ["quarantine_log_max_rows", settings.quarantineLogMaxRows, "Скільки останніх подій залишати в QuarantineLog. 0 = не чистити лог."],
+    ["quarantine_log_max_rows", settings.quarantineLogMaxRows, "Скільки останніх подій залишати в Quarantine History. 0 = не чистити лог."],
     ["-- 7.3 Кліки без продажів --", "", ""],
     ["enable_no_sales_rule", settings.enableNoSalesRule, "true = включити правило 'кліки є, конверсій немає'."],
     ["clicks_threshold", settings.clicksThreshold, "Кліків більше цього значення і 0 конверсій = NO_SALES карантин."],
@@ -550,7 +563,7 @@ function writeSettingsTemplate_(sheet, settings) {
     ["enable_dashboard_from_diagnostics", settings.enableDashboardFromDiagnostics, "true = будувати Dashboard з готового ProductDiagnostics без читання Merchant API. Це окремий режим лише для Dashboard та DashboardData: звичайний розрахунок товарів і карантинів не виконується. Потрібна вже заповнена діагностика; дані успадковують її актуальність."],
     ["enable_managed_sheet_formatting", settings.enableManagedSheetFormatting, "false = писати тільки значення і не запускати масове форматування службових листів. Не вимикає все оформлення: Settings, ProductTypes і Seasonality продовжують форматуватися; Dashboard має окрему логіку оформлення."],
     ["enable_previous_state_read", settings.enablePreviousStateRead, "false = не читати старий стан ProductDiagnostics/Products перед побудовою рядків. Виняток: ID товару, ознака карантину та дата останнього виходу з ProductDiagnostics читаються завжди, щоб визначити вихід і не враховувати старі витрати."],
-    ["enable_sheet_protection", settings.enableSheetProtection, "false = не оновлювати захист службових листів. Не знімає раніше встановлений захист інших листів. Захист Seasonality скрипт знімає окремо незалежно від цієї галочки."],
+    ["enable_sheet_protection", settings.enableSheetProtection, "Типово false: автоматичних замків немає. true = запам'ятовувати ручні захисти листів і діапазонів та відновлювати видалені після запуску. false = забути збережений набір; наявні ручні захисти не видаляються. Щоб прибрати захист назавжди: вимкніть опцію, виконайте запуск і видаліть замок вручну."],
     ["enable_products_write", settings.enableProductsWrite, "false = не перезаписувати Products; корисно для окремого запуску діагностики або Dashboard. Наявний допфід залишається старим. У звичайному режимі порожній Products спричинить помилку; інші ввімкнені розрахунки та записи продовжуються."],
     ["write_chunk_size", settings.writeChunkSize, "Кількість рядків в одному setValues-блоці для великих листів, напр. 3000-10000. Застосовується до запису Products і повної ProductDiagnostics; це не розмір сторінки Merchant API."],
     ["product_diagnostics_start_row", settings.productDiagnosticsStartRow, "1 = писати ProductDiagnostics з початку. 110001 = дописати хвіст з цього рядка даних. Це номер рядка даних без заголовка, не продовження всього скрипта. Розрахунки виконуються заново; попередні рядки повної діагностики не оновлюються, крім трьох полів карантину. Не використовуйте для звичайного запуску."],
@@ -560,17 +573,126 @@ function writeSettingsTemplate_(sheet, settings) {
     ["merchant_api_page_size", settings.merchantApiPageSize, "Скільки товарів читати за один запит, напр. 1000. Не трогать."],
     ["merchant_api_retry_count", settings.merchantApiRetryCount, "Скільки разів повторювати тимчасові внутрішні помилки Merchant API."],
     ["merchant_api_retry_sleep_seconds", settings.merchantApiRetrySleepSeconds, "Базова пауза між повторними запитами Merchant API. Кожна наступна спроба чекає довше."],
-    ["reset_quarantine", settings.resetQuarantine, "УВАГА: true = на кожному запуску видаляти всю історію карантину з QuarantineRegistry, QuarantineLog і карантинні дані ProductDiagnostics. Поки галочка стоїть, нові карантини не призначаються. Цілі, сезони, пріоритети та інші причини виключення зберігаються. Для оновлення виключень у допфіді потрібен звичайний запуск із enable_products_write=true, не режим Dashboard із діагностики. Галочка не знімається автоматично: після тесту зніміть її вручну; історія почнеться заново."]
+    ["reset_quarantine", settings.resetQuarantine, "УВАГА: true = на кожному запуску видаляти всю історію карантину з Quarantine Active Now, Quarantine History і карантинні дані ProductDiagnostics. Поки галочка стоїть, нові карантини не призначаються. Цілі, сезони, пріоритети та інші причини виключення зберігаються. Для оновлення виключень у допфіді потрібен звичайний запуск із enable_products_write=true, не режим Dashboard із діагностики. Галочка не знімається автоматично: після тесту зніміть її вручну; історія почнеться заново."]
   ];
 
 
-  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
-  SpreadsheetApp.flush();
-  sheet.clear();
-  sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearDataValidations();
-  SpreadsheetApp.flush();
+  if (sheet.getLastRow() > 0) {
+    migrateSettingsInPlace_(sheet, rows);
+    return;
+  }
   sheet.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
   formatSettingsTemplate_(sheet, rows);
+  updatePrioritySettingsValidations_(sheet);
+}
+
+function migrateSettingsInPlace_(sheet, rows) {
+  var values = sheet.getDataRange().getValues();
+  var keys = values.map(function(row) { return safeTrim_(row[0]); });
+  var notes = sheet.getRange(1, 1, values.length, 1).getNotes().map(function(row) { return row[0]; });
+  var canonical = rows.map(function(row) { return safeTrim_(row[0]); });
+  // Не обирати довільне значення за дубльованого ключа.
+  canonical.slice(1).forEach(function(key) {
+    if (keys.indexOf(key) !== keys.lastIndexOf(key)) throw new Error("SETTINGS_DUPLICATE_KEY: " + key);
+  });
+  var anchor = 0;
+  for (var i = 1; i < rows.length; i++) {
+    var key = canonical[i];
+    var current = keys.indexOf(key);
+    var pendingNote = "UMPC_SETTINGS_PENDING:" + key;
+    var pending = notes.indexOf(pendingNote);
+    if (pending >= 0 && current >= 0 && pending !== current) throw new Error("SETTINGS_PENDING_CONFLICT: " + key);
+    if (current < 0 && pending >= 0) {
+      if (!sheet.getRange(pending + 1, 1, 1, sheet.getMaxColumns()).isBlank()) throw new Error("SETTINGS_PENDING_CONFLICT: " + key);
+      formatInsertedSettingRow_(sheet, pending + 1, rows[i]);
+      sheet.getRange(pending + 1, 1, 1, 3).setValues([rows[i]]);
+      keys[pending] = key;
+      current = pending;
+    }
+    if (pending >= 0) {
+      sheet.getRange(pending + 1, 1).clearNote();
+      notes[pending] = "";
+    }
+    var boundary = keys.length;
+    for (var j = i + 1; j < canonical.length; j++) {
+      var next = keys.indexOf(canonical[j]);
+      if (next > anchor && next < boundary) boundary = next;
+    }
+    if (current > anchor && current < boundary) {
+      anchor = current;
+      continue;
+    }
+    var destination = boundary < keys.length ? boundary : anchor + 1;
+    if (current >= 0) {
+      // Переміщується цілий рядок, а не значення: формули, нотатки,
+      // validation і користувацьке оформлення залишаються з параметром.
+      sheet.moveRows(sheet.getRange(current + 1, 1, 1, sheet.getMaxColumns()), destination + 1);
+      keys.splice(current, 1);
+      var movedNote = notes.splice(current, 1)[0];
+      if (current < destination) destination--;
+      keys.splice(destination, 0, key);
+      notes.splice(destination, 0, movedNote);
+    } else {
+      if (destination >= sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+      else sheet.insertRowsBefore(destination + 1, 1);
+      keys.splice(destination, 0, key);
+      notes.splice(destination, 0, pendingNote);
+      sheet.getRange(destination + 1, 1).setNote(pendingNote);
+      // Ключ записується останнім: після збою незавершений рядок не
+      // сприймається як готовий параметр. Старі рядки не очищаються.
+      formatInsertedSettingRow_(sheet, destination + 1, rows[i]);
+      sheet.getRange(destination + 1, 1, 1, 3).setValues([rows[i]]);
+      sheet.getRange(destination + 1, 1).clearNote();
+      notes[destination] = "";
+    }
+    anchor = destination;
+  }
+  // Відновити відсутні validation без зміни існуючих значень або формул.
+  var boolRule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+  rows.forEach(function(row) {
+    var index = keys.indexOf(safeTrim_(row[0]));
+    if (index >= 0 && typeof row[1] === "boolean" && !sheet.getRange(index + 1, 2).getDataValidation()) sheet.getRange(index + 1, 2).setDataValidation(boolRule);
+  });
+  updatePrioritySettingsValidations_(sheet);
+}
+
+function formatInsertedSettingRow_(sheet, rowNumber, row) {
+  var key = safeTrim_(row[0]);
+  var range = sheet.getRange(rowNumber, 1, 1, 3);
+  range.clearDataValidations().setNumberFormat("General");
+  range.setBackground("#ffffff").setFontWeight("normal").setFontColor("#000000");
+  if (key.substring(0, 2) === "--") {
+    range.setBackground(SECTION_BACKGROUND).setFontWeight("bold");
+    return;
+  }
+  var cell = sheet.getRange(rowNumber, 2);
+  if (!isSettingsServiceKey_(key)) cell.setBackground(MANUAL_BACKGROUND);
+  if (isRequiredSetupSetting_(key)) sheet.getRange(rowNumber, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
+  if (key === "spend_to_price_threshold" || key === "target_cpa_excess_threshold") cell.setNumberFormat("0%");
+  var rule = null;
+  if (typeof row[1] === "boolean") rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build();
+  if (["product_type_custom_label_field", "funnel_stage_output_attribute", "quarantine_output_attribute", "priority_output_attribute"].indexOf(key) >= 0) {
+    var labels = ["custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"];
+    if (key === "priority_output_attribute") labels.unshift("none");
+    rule = SpreadsheetApp.newDataValidation().requireValueInList(labels, true).setAllowInvalid(false).build();
+  }
+  if (key === "benchmark_label_field" || key === "priority_label_field") {
+    var options = getBenchmarkLabelFieldOptions_();
+    if (key === "priority_label_field") options = ["none", "product_types_sheet"].concat(options);
+    rule = SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(true).build();
+  }
+  if (rule) cell.setDataValidation(rule);
+}
+
+function updatePrioritySettingsValidations_(sheet) {
+  var values = sheet.getDataRange().getValues();
+  values.forEach(function(row, i) {
+    var key = safeTrim_(row[0]);
+    if (key === "quarantine_output_attribute") sheet.getRange(i + 1, 1).setBackground(REQUIRED_SETTING_BACKGROUND);
+    if (key !== "priority_label_field" && key !== "priority_output_attribute") return;
+    var options = key === "priority_label_field" ? ["none", "product_types_sheet"].concat(getBenchmarkLabelFieldOptions_()) : ["none", "custom_label_0", "custom_label_1", "custom_label_2", "custom_label_3", "custom_label_4"];
+    sheet.getRange(i + 1, 2).setDataValidation(SpreadsheetApp.newDataValidation().requireValueInList(options, true).setAllowInvalid(key === "priority_label_field").build());
+  });
 }
 
 
@@ -625,7 +747,7 @@ function formatSettingsTemplate_(sheet, rows) {
     if (typeof rows[r][1] === "boolean") {
       sheet.getRange(r + 1, 2).setDataValidation(boolRule);
     }
-    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute" || settingKey === "priority_output_attribute") {
+    if (settingKey === "product_type_custom_label_field" || settingKey === "funnel_stage_output_attribute" || settingKey === "quarantine_output_attribute" || settingKey === "priority_output_attribute") {
       sheet.getRange(r + 1, 2).setDataValidation(customLabelRule);
     } else if (settingKey === "benchmark_label_field" || settingKey === "priority_label_field") {
       sheet.getRange(r + 1, 2).setDataValidation(benchmarkSourceRule);
@@ -711,6 +833,7 @@ function isRequiredSetupSetting_(key) {
     "benchmark_label_field",
     "priority_label_field",
     "funnel_stage_output_attribute",
+    "quarantine_output_attribute",
     "priority_output_attribute"
   ].indexOf(key) >= 0;
 }
@@ -884,14 +1007,20 @@ function validateRuntimeSettings_(settings) {
   if (!isValidFeedCustomLabelHeader_(settings.funnelStageOutputAttribute)) {
     throw new Error("funnel_stage_output_attribute має бути custom_label_0..custom_label_4.");
   }
-  if (!isValidFeedCustomLabelHeader_(settings.priorityOutputAttribute)) {
-    throw new Error("priority_output_attribute має бути custom_label_0..custom_label_4.");
+  if (!isValidFeedCustomLabelHeader_(getQuarantineOutputAttribute_(settings))) {
+    throw new Error("quarantine_output_attribute має бути custom_label_0..custom_label_4.");
   }
-  if (!isAllowedBenchmarkLabelField_(settings.priorityLabelField)) {
+  if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() !== "none" && !isValidFeedCustomLabelHeader_(settings.priorityOutputAttribute)) {
+    throw new Error("priority_output_attribute має бути none або custom_label_0..custom_label_4.");
+  }
+  if (!isExclusivePrioritySource_(settings) && !isAllowedBenchmarkLabelField_(settings.priorityLabelField)) {
     throw new Error("priority_label_field має бути custom_label_0..custom_label_4 або назвою custom attribute.");
   }
   if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() === safeTrim_(settings.funnelStageOutputAttribute).toLowerCase()) {
-    throw new Error("priority_output_attribute не може збігатися з funnel_stage_output_attribute.");
+    throw new Error("Перевір Settings: priority_output_attribute і funnel_stage_output_attribute вказують на одну custom label. Вибери різні мітки; розрахунок зупинено.");
+  }
+  if (safeTrim_(settings.priorityOutputAttribute).toLowerCase() === getQuarantineOutputAttribute_(settings)) {
+    throw new Error("Перевір Settings: priority_output_attribute і quarantine_output_attribute вказують на одну custom label. Вибери різні мітки; розрахунок зупинено.");
   }
 
   if (settings.targetCpaLookbackDays < 1) {
@@ -1524,6 +1653,7 @@ function getBenchmarkGroup_(merchantProduct, settings) {
 
 
 function getPriorityGroup_(merchantProduct, settings) {
+  if (isExclusivePrioritySource_(settings)) return "";
   var fieldName = normalizeBenchmarkLabelField_(settings && settings.priorityLabelField);
   if (!fieldName) return "";
   var customLabel = toMerchantApiCustomLabelField_(fieldName);
@@ -1907,6 +2037,63 @@ function resetQuarantineState_(sheets) {
   Logger.log("Історію карантину очищено; нові карантини не призначаються, поки reset_quarantine=true.");
 }
 
+function readQuarantineExemptions_(sheet) {
+  var result = {};
+  if (sheet.getLastRow() < 2) return result;
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var idCol = findHeaderIndex_(header, "id");
+  var flagCol = findHeaderIndex_(header, "quarantine_exempt");
+  if (idCol < 0 || flagCol < 0) return result;
+  var count = sheet.getLastRow() - 1;
+  var ids = sheet.getRange(2, idCol + 1, count, 1).getDisplayValues();
+  var flags = sheet.getRange(2, flagCol + 1, count, 1).getValues();
+  ids.forEach(function(row, i) {
+    var id = normOfferId_(row[0]);
+    if (id && seasonalityCellToBool_(flags[i][0])) result[id] = true;
+  });
+  return result;
+}
+
+function isQuarantineExempt_(id, settings) {
+  return !!(settings && settings.quarantineExemptById && settings.quarantineExemptById[normOfferId_(id)] === true);
+}
+
+function formatQuarantineExemptionColumn_(sheet, header, rowCount) {
+  var col = findHeaderIndex_(header, "quarantine_exempt") + 1;
+  if (!col) return;
+  sheet.getRange(1, col).setNote("Не застосовувати карантин: увімкніть для звільнення від усіх чотирьох правил. Активний карантин знімається під час наступного звичайного запуску. Історія, ID, категорії та сезонність зберігаються. Зніміть галочку, щоб повернути штатні перевірки.");
+  if (rowCount <= 1) return;
+  sheet.getRange(2, col, rowCount - 1, 1).setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(false).build()).setBackground(MANUAL_BACKGROUND);
+}
+
+function positionQuarantineExemptionColumn_(sheet, header) {
+  var index = findHeaderIndex_(header, "quarantine_exempt");
+  if (index < 0 || index === 1) return;
+  sheet.moveColumns(sheet.getRange(1, index + 1, sheet.getMaxRows(), 1), 2);
+  header.splice(1, 0, header.splice(index, 1)[0]);
+}
+
+function writeQuarantineExemptionFlags_(sheet, exemptions) {
+  var lastRow = sheet.getLastRow();
+  if (!lastRow) return;
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var col = findHeaderIndex_(header, "quarantine_exempt") + 1;
+  if (!col) {
+    header.push("quarantine_exempt");
+    col = header.length;
+    if (sheet.getMaxColumns() < col) sheet.insertColumnsAfter(sheet.getMaxColumns(), col - sheet.getMaxColumns());
+    sheet.getRange(1, col).setValue("quarantine_exempt");
+  }
+  positionQuarantineExemptionColumn_(sheet, header);
+  col = findHeaderIndex_(header, "quarantine_exempt") + 1;
+  var idCol = findHeaderIndex_(header, "id") + 1;
+  if (lastRow > 1 && idCol) {
+    var ids = sheet.getRange(2, idCol, lastRow - 1, 1).getDisplayValues();
+    sheet.getRange(2, col, lastRow - 1, 1).setValues(ids.map(function(row) { return [exemptions[normOfferId_(row[0])] === true]; }));
+  }
+  formatQuarantineExemptionColumn_(sheet, header, lastRow);
+}
+
 function readQuarantineLifecycle_(sheet) {
   var result = {};
   if (sheet.getLastRow() < 2) return result;
@@ -1988,7 +2175,7 @@ function getQuarantineBatchStats_(start, end, ids) {
 }
 
 // Мінімальний стан зберігається навіть із вимкненим повним записом діагностики.
-function writeQuarantineLifecycle_(sheet, rows, maxLevels) {
+function writeQuarantineLifecycle_(sheet, rows, maxLevels, exemptions) {
   var header = sheet.getLastRow() ? sheet.getRange(1, 1, 1, Math.max(1, sheet.getLastColumn())).getValues()[0] : [];
   ["id", "quarantine_active", "last_quarantine_exit_date"].forEach(function(name) {
     if (findHeaderIndex_(header, name) < 0) header.push(name);
@@ -2015,6 +2202,7 @@ function writeQuarantineLifecycle_(sheet, rows, maxLevels) {
   sheet.getRange(2, idCol, existing.length, 1).setNumberFormat("@").setValues(existing);
   sheet.getRange(2, activeCol, existing.length, 1).setValues(actives);
   sheet.getRange(2, dateCol, existing.length, 1).setNumberFormat("@").setValues(dates);
+  writeQuarantineExemptionFlags_(sheet, exemptions || readQuarantineExemptions_(sheet));
 }
 
 function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTargetCpaRules, settings, lifecycle) {
@@ -2028,6 +2216,14 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
   var todayStr = formatDate_(today);
   applyEnabledQuarantineRules_(registryMap, settings);
   lifecycle = lifecycle || {};
+  Object.keys(registryMap).forEach(function(id) {
+    if (!isQuarantineExempt_(id, settings)) return;
+    if (isDateActive_(registryMap[id].activeUntil, today)) {
+      if (!lifecycle[id]) lifecycle[id] = { wasActive: true, exitDate: "" };
+      lifecycle[id].wasActive = true;
+    }
+    delete registryMap[id];
+  });
   updateQuarantineExitDates_(lifecycle, registryMap, today);
 
 
@@ -2060,7 +2256,7 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
 
 
   for (var normId in candidates) {
-    if (!candidates.hasOwnProperty(normId)) continue;
+    if (!candidates.hasOwnProperty(normId) || isQuarantineExempt_(normId, settings)) continue;
 
 
     var candidate = candidates[normId];
@@ -2098,7 +2294,7 @@ function updateQuarantine_(registrySheet, logSheet, merchantMap, productTypeTarg
 
   var activeById = buildActiveQuarantineMap_(registryMap, today);
   writeQuarantineRegistry_(registrySheet, registryMap, today);
-  writeQuarantineLogHistory_(logSheet, historyMap, settings.quarantineLogMaxRows, settings.problemThreshold);
+  writeQuarantineLogHistory_(logSheet, historyMap, settings.quarantineLogMaxRows, settings.problemThreshold, settings.quarantineExemptById);
 
 
   Logger.log("Карантин: кандидатів у цьому запуску: " + Object.keys(candidates).length);
@@ -2412,7 +2608,7 @@ function upsertQuarantineHistory_(historyMap, offerId, count, lastAdded) {
 }
 
 
-function writeQuarantineLogHistory_(sheet, historyMap, maxRows, problemThreshold) {
+function writeQuarantineLogHistory_(sheet, historyMap, maxRows, problemThreshold, exemptions) {
   var keys = Object.keys(historyMap).sort(function(a, b) {
     var ca = toNumber_(historyMap[a].count);
     var cb = toNumber_(historyMap[b].count);
@@ -2420,7 +2616,13 @@ function writeQuarantineLogHistory_(sheet, historyMap, maxRows, problemThreshold
     return naturalCmp_(historyMap[a].offerId, historyMap[b].offerId);
   });
   var keepRows = Math.max(0, Number(maxRows) || 0);
-  if (keepRows > 0 && keys.length > keepRows) keys = keys.slice(0, keepRows);
+  if (keepRows > 0 && keys.length > keepRows) {
+    var retained = keys.slice(0, keepRows);
+    // Звільнення не має втратити лічильник через одночасне видалення
+    // активного рядка і ліміт історії. Поки галочка активна, історія зберігається.
+    keys.forEach(function(id) { if (exemptions && exemptions[id] === true && retained.indexOf(id) < 0) retained.push(id); });
+    keys = retained;
+  }
 
   var rows = [];
   for (var i = 0; i < keys.length; i++) {
@@ -2523,6 +2725,7 @@ function buildProductTypeStatsMap_(products, adsStatsMap, maxLevels) {
         nodeStats.priceCount += 1;
         nodeStats.priceSum += product.price;
       }
+      nodeStats.clicks = (nodeStats.clicks || 0) + (stats.clicks || 0);
       nodeStats.cost += stats.cost || 0;
       nodeStats.roasConversionValue += stats.conversionValue || 0;
       nodeStats.conversions += stats.conversions || 0;
@@ -2621,6 +2824,9 @@ function dfsEmitTreeRows_(node, level, currentPath, rows, manualStateMap, statsM
       autumn: savedState ? savedState.autumn === true : false,
       path: currentPath.slice(),
       aov: stats.aov || 0,
+      clicks30d: statsMap[pathKey] ? statsMap[pathKey].clicks || 0 : 0,
+      cr30d: statsMap[pathKey] && statsMap[pathKey].clicks > 0 ? statsMap[pathKey].conversions / statsMap[pathKey].clicks : "",
+      categoryUrl: savedState ? savedState.categoryUrl || "" : "",
       conversions30d: stats.conversions || 0,
       spend30d: stats.cost || 0,
       cpa30d: stats.cpa || 0,
@@ -2690,10 +2896,12 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
 
 
   var header = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var pathKeyIndex = findHeaderIndex_(header, "path_key");
   var targetCpaIndex = findHeaderIndex_(header, "target_cpa");
   var marginIndex = findHeaderIndex_(header, "margin_percent");
   var targetRoasIndex = findHeaderIndex_(header, "target_roas");
   var targetRoasFormulas = targetRoasIndex >= 0 ? sheet.getRange(2, targetRoasIndex + 1, lastRow - 1, 1).getFormulas() : [];
+  var categoryUrlIndex = findHeaderIndex_(header, "category_url");
   var commentIndex = findHeaderIndex_(header, "comment");
   var winterIndex = findHeaderIndex_(header, "winter");
   var springIndex = findHeaderIndex_(header, "spring");
@@ -2707,15 +2915,22 @@ function readProductTypeManualStateMap_(sheet, maxLevels, settings) {
 
   var width = Math.max(lastCol, commentIndex + 1, targetCpaIndex + 1, benchmarkLabelIndex + 1, priorityLabelIndex + 1, maxLevels + 3);
   var data = sheet.getRange(2, 1, lastRow - 1, width).getValues();
+  var categoryLinks = sheet.getRange(2, 2, lastRow - 1, maxLevels).getRichTextValues();
   var currentPath = createEmptyPath_(maxLevels);
 
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
-    applySparsePathRow_(currentPath, row, 1, maxLevels);
+    var savedKey = pathKeyIndex >= 0 ? safeTrim_(row[pathKeyIndex]) : "";
+    if (savedKey) {
+      currentPath = savedKey.split("|||");
+    } else {
+      applySparsePathRow_(currentPath, row, 1, maxLevels);
+    }
     var key = buildPathKey_(currentPath, maxLevels);
     if (!key) continue;
     result[key] = {
+      categoryUrl: (categoryUrlIndex >= 0 ? safeTrim_(row[categoryUrlIndex]) : "") || getExistingCategoryUrl_(row, categoryLinks[i], maxLevels),
       checked: row[0] === true,
       winter: seasonalityCellToBool_(winterIndex >= 0 ? row[winterIndex] : false),
       spring: seasonalityCellToBool_(springIndex >= 0 ? row[springIndex] : false),
@@ -2745,7 +2960,9 @@ function applyProductTypesTargets_(rows, settings) {
 }
 
 function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
+  var visibility = readColumnVisibility_(sheet);
   var header = buildProductTypesHeader_(sheet, maxLevels, settings);
+  if (header.length > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), header.length - sheet.getMaxColumns());
 
 
   var output = [header];
@@ -2769,6 +2986,8 @@ function writeProductTypesSheet_(sheet, rows, maxLevels, settings) {
   clearManagedProductTypesSheet_(sheet, output.length, output[0].length, header);
   sheet.getRange(1, 1, output.length, output[0].length).setValues(output);
   formatProductTypesSheet_(sheet, output.length, header, settings);
+  restoreColumnVisibility_(sheet, header, visibility);
+  writeCategoryLinks_(sheet, rows, maxLevels);
   if (rows.length > 0) {
     var rule = SpreadsheetApp.newDataValidation().requireCheckbox().setAllowInvalid(true).build();
     sheet.getRange(2, 1, rows.length, 1).setDataValidation(rule);
@@ -2793,6 +3012,9 @@ function buildProductTypesHeader_(sheet, maxLevels, settings) {
     "conversions_30d",
     "spend_30d",
     "conversion_value_30d",
+    "clicks_30d",
+    "cr_30d",
+    "category_url",
     "comment"
   ];
 
@@ -2904,6 +3126,9 @@ function getProductTypesRowValue_(header, rowData, displayPath, maxLevels, rowNu
   if (header === "path_key") return buildPathKey_(rowData.path, maxLevels);
   if (header === "path_depth") return getPathDepth_(rowData.path, maxLevels);
   if (header === "has_season_rule") return "=OR(" + columnLetter_(maxLevels + 4) + rowNumber + ":" + columnLetter_(maxLevels + 7) + rowNumber + ")";
+  if (header === "category_url") return rowData.categoryUrl || "";
+  if (header === "clicks_30d") return rowData.clicks30d || 0;
+  if (header === "cr_30d") return rowData.cr30d;
   if (header === "aov") return round2_(rowData.aov);
   if (header === "conversions_30d") return round2_(rowData.conversions30d);
   if (header === "spend_30d") return round2_(rowData.spend30d);
@@ -2958,8 +3183,10 @@ function formatProductTypesSheet_(sheet, rowCount, header, settings) {
       return [value[0] === "" || target <= 0 || actual === target ? "#ffffff" : (actual > target ? GOOD_BACKGROUND : BAD_LIGHT_BACKGROUND)];
     }));
   }
-  if (benchmarkLabelCol > 0) sheet.showColumns(benchmarkLabelCol, 5);
-  sheet.showColumns(targetCpaCol, 3);
+  if (rowCount > 1) {
+    sheet.getRange(2, findHeaderIndex_(header, "cr_30d") + 1, rowCount - 1, 1).setNumberFormat("0.00%");
+    sheet.getRange(2, findHeaderIndex_(header, "category_url") + 1, rowCount - 1, 1).setBackground(MANUAL_BACKGROUND);
+  }
   ["path_key", "path_depth", "has_season_rule"].forEach(function(name) {
     var col = findHeaderIndex_(header, name) + 1;
     if (col > 0) sheet.hideColumns(col);
@@ -3349,7 +3576,6 @@ function formatSeasonalitySheet_(sheet, rowCount, header, settings) {
     var finalStartCol = findHeaderIndex_(header, "winter") + 1;
     if (finalStartCol > 0) sheet.hideColumns(finalStartCol, 4);
   }
-  removeProtectionsForSheet_(sheet);
   sheet.setFrozenRows(1);
 }
 
@@ -3370,7 +3596,7 @@ function removeProtectionsForSheet_(sheet) {
   for (var t = 0; t < types.length; t++) {
     var protections = sheet.getProtections(types[t]);
     for (var i = 0; i < protections.length; i++) {
-      if (protections[i].canEdit()) protections[i].remove();
+      if (["Seasonality category formulas", "Seasonality final formulas", "Unified Product Control: службовий лист"].indexOf(protections[i].getDescription()) >= 0 && protections[i].canEdit()) protections[i].remove();
     }
   }
 }
@@ -3569,7 +3795,14 @@ function appendAttributionFieldsToRow_(row, attributionMap) {
 }
 
 
+function isExclusivePrioritySource_(settings) {
+  return ["none", "product_types_sheet"].indexOf(safeTrim_(settings && settings.priorityLabelField).toLowerCase()) >= 0;
+}
+
 function choosePriorityLabel_(product, productTypePriorityRules, priorityMap, settings) {
+  var source = safeTrim_(settings.priorityLabelField).toLowerCase();
+  if (source === "none") return "";
+  if (source === "product_types_sheet") return chooseProductTypePriorityLabel_(product.productTypes, productTypePriorityRules, settings.maxLevels) || "";
   var manualPriority = priorityMap && priorityMap[product.normId] ? safeTrim_(priorityMap[product.normId]) : "";
   if (manualPriority) return manualPriority;
 
@@ -3600,7 +3833,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
     var p = merchantProducts[i];
     var previous = previousMap[p.normId] || { shopping: "", display: "", statusDate: "" };
     var categoryAllowed = isAnyProductTypeAllowed_(p.productTypes, productTypeRules, settings.maxLevels, settings.enableProductTypeFilter);
-    var quarantine = activeQuarantineMap[p.normId] || null;
+    var quarantine = isQuarantineExempt_(p.normId, settings) ? null : activeQuarantineMap[p.normId] || null;
     var seasonality = getSeasonalityDecision_(p, seasonalityMap, productTypeSeasonalityRules, settings);
     var exclusionReasons = [];
     if (!categoryAllowed) pushReason_(exclusionReasons, "PRODUCT_TYPE_NOT_ALLOWED");
@@ -3609,7 +3842,7 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
       var quarantineReasons = quarantine.reasons.split(",");
       for (var qr = 0; qr < quarantineReasons.length; qr++) pushReason_(exclusionReasons, safeTrim_(quarantineReasons[qr]));
     }
-    var shouldExclude = exclusionReasons.length > 0;
+    var shouldExclude = !categoryAllowed || !seasonality.allowed;
 
 
     if (!categoryAllowed) categoryExcluded++;
@@ -3759,13 +3992,39 @@ function buildProductsOutputRows_(merchantProducts, merchantMap, previousMap, pr
 
 
 function writeProductsSheet_(sheet, rows, settings) {
+  if (settings.enableProductsOutput === false) {
+    sheet.getDataRange().clearContent();
+    return "DISABLED_EMPTY";
+  }
+  var includePriorityLabel = shouldWriteProductsPriorityLabel_(settings);
+  var quarantineField = getQuarantineOutputAttribute_(settings);
+  var labelHeaders = [safeTrim_(settings.funnelStageOutputAttribute).toLowerCase()];
+  if (includePriorityLabel) labelHeaders.push(safeTrim_(settings.priorityOutputAttribute).toLowerCase());
+  if (labelHeaders.indexOf(quarantineField) < 0) labelHeaders.push(quarantineField);
+  var quarantineColumnIndex = 3 + labelHeaders.indexOf(quarantineField);
+  if (!includePriorityLabel && sheet.getLastColumn() >= 5) {
+    var legacy = sheet.getRange(1, 5, Math.max(sheet.getLastRow(), 1), 1).getValues();
+    var isCurrentQuarantineColumn = labelHeaders.length === 2 && safeTrim_(legacy[0][0]).toLowerCase() === quarantineField &&
+      legacy.slice(1).every(function(row) { return row[0] === "" || row[0] === "Карантин"; });
+    if (!isCurrentQuarantineColumn && legacy.some(function(row) { return row[0] !== ""; })) {
+      Logger.log("PRODUCTS_PRIORITY_MIGRATION_REQUIRED: Products не оновлено. Старий підключений допфід продовжує передавати priority! Потрібне окреме рішення щодо міграції; none ще не застосовано до фіда. Аналітика продовжується.");
+      return "PRIORITY_MIGRATION_REQUIRED";
+    }
+  }
+  var outputColCount = 3 + labelHeaders.length;
+  if (sheet.getLastColumn() > outputColCount) {
+    var extra = sheet.getRange(1, outputColCount + 1, Math.max(sheet.getLastRow(), 1), sheet.getLastColumn() - outputColCount).getValues();
+    if (extra.some(function(row) { return row.some(function(value) { return value !== ""; }); })) {
+      Logger.log("PRODUCTS_LAYOUT_MIGRATION_REQUIRED: Products не оновлено; зайві заповнені колонки потребують окремого рішення щодо міграції.");
+      return "LAYOUT_MIGRATION_REQUIRED";
+    }
+  }
   if (!rows || rows.length === 0) {
     Logger.log("Products write skipped: no rows were built, previous feed rows preserved.");
-    return;
+    return "NO_ROWS_PRESERVED";
   }
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var output = [];
-  var includePriorityLabel = shouldWriteProductsPriorityLabel_(settings);
 
 
   for (var r = 0; r < rows.length; r++) {
@@ -3775,25 +4034,28 @@ function writeProductsSheet_(sheet, rows, settings) {
       rows[r][idx.display],
       rows[r][idx.funnelStage] || ""
     ];
-    if (includePriorityLabel) outRow.push(rows[r][idx.priorityLabel] || "other");
+    if (includePriorityLabel) outRow.push(rows[r][idx.priorityLabel] || (isExclusivePrioritySource_(settings) ? "" : "other"));
+    while (outRow.length < outputColCount) outRow.push("");
+    if (rows[r][idx.quarantineActive] === "YES") outRow[quarantineColumnIndex] = "Карантин";
     output.push(outRow);
   }
 
 
-  var outputColCount = includePriorityLabel ? 5 : 4;
 
 
   sheet.getRange(1, 1, 1, 3).setValues([["id", "excluded_destination", "excluded_destination"]]);
   writeProductsFunnelHeader_(sheet, settings);
   writeProductsPriorityHeader_(sheet, settings, includePriorityLabel);
+  sheet.getRange(1, quarantineColumnIndex + 1).setValue(quarantineField);
   writeRowsInChunks_(sheet, 2, 1, output, settings.writeChunkSize, "Products");
-  clearProductsTailAfterWrite_(sheet, output.length, Math.max(5, outputColCount));
+  clearProductsTailAfterWrite_(sheet, output.length, outputColCount);
 
 
   if (settings.enableManagedSheetFormatting) {
     formatProductsSheet_(sheet, output.length + 1, outputColCount);
   }
   if (rows.length > 0) sheet.getRange(2, 1, rows.length, 1).setNumberFormat("@");
+  return "WRITTEN";
 }
 
 
@@ -3805,6 +4067,10 @@ function clearProductsTailAfterWrite_(sheet, writtenRows, clearWidth) {
   }
 }
 
+
+function getQuarantineOutputAttribute_(settings) {
+  return safeTrim_(settings.quarantineOutputAttribute || settings.funnelStageOutputAttribute).toLowerCase();
+}
 
 function writeProductsFunnelHeader_(sheet, settings) {
   var cell = sheet.getRange(1, 4);
@@ -3820,11 +4086,8 @@ function shouldWriteProductsPriorityLabel_(settings) {
 
 
 function writeProductsPriorityHeader_(sheet, settings, enabled) {
+  if (!enabled) return;
   var cell = sheet.getRange(1, 5);
-  if (!enabled) {
-    cell.clearContent();
-    return;
-  }
   cell.setValue(safeTrim_(settings.priorityOutputAttribute).toLowerCase() || "custom_label_4");
 }
 
@@ -3856,8 +4119,7 @@ function formatProductsSheet_(sheet, rowCount, colCount) {
 }
 
 
-function writeProductDiagnosticsSheet_(sheet, rows, settings) {
-  var maxLevels = settings.maxLevels;
+function getDiagnosticsSourceHeader_(maxLevels) {
   var header = [
     "id",
     "title",
@@ -3929,37 +4191,47 @@ function writeProductDiagnosticsSheet_(sheet, rows, settings) {
   header.push("last_quarantine_exit_date");
 
 
-  var startDataRow = Math.max(1, Number(settings.productDiagnosticsStartRow) || 1);
-  var startIndex = startDataRow - 1;
-  var rowsToWrite = rows.slice(startIndex);
-  var sourceHeader = header.slice();
-  if (startDataRow <= 1) {
+  return header;
+}
+
+function writeProductDiagnosticsSheet_(sheet, rows, settings) {
+  var sourceHeader = getDiagnosticsSourceHeader_(settings.maxLevels);
+  var exemptions = settings.quarantineExemptById || readQuarantineExemptions_(sheet);
+  var header = sheet.getLastRow() ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0] : [];
+  var oldWidth = header.length;
+  if (!header.length) {
+    header = sourceHeader.slice();
     header.splice(header.indexOf("quarantine_reasons") + 1, 0, header.pop());
+    header.splice(1, 0, "quarantine_exempt");
   } else {
-    header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
-    var exitColumn = header.indexOf("last_quarantine_exit_date");
-    var destinationColumn = header.indexOf("quarantine_reasons") + 1;
-    if (exitColumn > destinationColumn && destinationColumn > 0) {
-      sheet.moveColumns(sheet.getRange(1, exitColumn + 1, sheet.getMaxRows(), 1), destinationColumn + 1);
-      header.splice(destinationColumn, 0, header.splice(exitColumn, 1)[0]);
-    }
+    sourceHeader.forEach(function(name) { if (findHeaderIndex_(header, name) < 0) header.push(name); });
   }
+  if (findHeaderIndex_(header, "quarantine_exempt") < 0) header.push("quarantine_exempt");
+  if (sheet.getMaxColumns() < header.length) sheet.insertColumnsAfter(sheet.getMaxColumns(), header.length - sheet.getMaxColumns());
+  if (header.length > oldWidth) sheet.getRange(1, oldWidth + 1, 1, header.length - oldWidth).setValues([header.slice(oldWidth)]);
+  positionQuarantineExemptionColumn_(sheet, header);
+  var startDataRow = Math.max(1, Number(settings.productDiagnosticsStartRow) || 1);
+  var rowsToWrite = rows.slice(startDataRow - 1).map(function(row) {
+    return row.concat([exemptions[normOfferId_(row[0])] === true]);
+  });
+  sourceHeader.push("quarantine_exempt");
   rowsToWrite = remapDiagnosticsRows_(rowsToWrite, sourceHeader, header);
-
-
-  if (startDataRow <= 1) {
-    sheet.clearContents();
-    sheet.getRange(1, 1, 1, header.length).setValues([header]);
-  } else {
-    Logger.log("ProductDiagnostics resume: start data row " + startDataRow + ", skip first " + startIndex + " rows.");
+  if (sheet.getMaxRows() < rows.length + 1) sheet.insertRowsAfter(sheet.getMaxRows(), rows.length + 1 - sheet.getMaxRows());
+  // Пишуться тільки керовані колонки. Сторонні формули не очищаються.
+  var groups = [];
+  for (var c = 0; c < header.length; c++) {
+    if (sourceHeader.indexOf(header[c]) < 0) continue;
+    if (groups.length && groups[groups.length - 1].end === c) groups[groups.length - 1].end++;
+    else groups.push({ start: c, end: c + 1 });
   }
-
-
-  writeRowsInChunks_(sheet, startDataRow + 1, 1, rowsToWrite, settings.writeChunkSize, "ProductDiagnostics");
-  if (settings.enableManagedSheetFormatting && startDataRow <= 1) {
-    formatProductDiagnosticsSheet_(sheet, rows.length + 1, header.length);
-  }
-  if (rowsToWrite.length > 0) sheet.getRange(startDataRow + 1, 1, rowsToWrite.length, 1).setNumberFormat("@");
+  var lastRow = sheet.getLastRow();
+  groups.forEach(function(group) {
+    writeRowsInChunks_(sheet, startDataRow + 1, group.start + 1, rowsToWrite.map(function(row) { return row.slice(group.start, group.end); }), settings.writeChunkSize, "ProductDiagnostics");
+    if (startDataRow <= 1 && lastRow > rows.length + 1) sheet.getRange(rows.length + 2, group.start + 1, lastRow - rows.length - 1, group.end - group.start).clearContent();
+  });
+  if (settings.enableManagedSheetFormatting && startDataRow <= 1) formatProductDiagnosticsSheet_(sheet, rows.length + 1, header.length);
+  if (rowsToWrite.length) sheet.getRange(startDataRow + 1, findHeaderIndex_(header, "id") + 1, rowsToWrite.length, 1).setNumberFormat("@");
+  formatQuarantineExemptionColumn_(sheet, header, Math.max(rows.length + 1, sheet.getLastRow()));
 }
 
 
@@ -4127,18 +4399,19 @@ function readDashboardSourceFromDiagnostics_(sheet, settings) {
   var idx = getOutputRowIndexes_(settings.maxLevels);
   var values = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var diagnosticsHeader = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  var exitIndex = diagnosticsHeader.indexOf("last_quarantine_exit_date");
-  if (exitIndex >= 0 && exitIndex !== diagnosticsHeader.length - 1) {
-    var internalHeader = diagnosticsHeader.slice();
-    internalHeader.push(internalHeader.splice(exitIndex, 1)[0]);
-    values = remapDiagnosticsRows_(values, diagnosticsHeader, internalHeader);
-  }
+  var exemptions = readQuarantineExemptions_(sheet);
+  values = remapDiagnosticsRows_(values, diagnosticsHeader, getDiagnosticsSourceHeader_(settings.maxLevels));
   var outputRows = [];
   var merchantProducts = [];
   for (var i = 0; i < values.length; i++) {
     var row = values[i];
     var offerId = safeTrim_(row[idx.id]);
     if (!offerId) continue;
+    if (exemptions[normOfferId_(offerId)]) {
+      row[idx.quarantineActive] = "";
+      row[idx.quarantineActive + 1] = "";
+      row[idx.quarantineReasons] = "";
+    }
     outputRows.push(row);
     merchantProducts.push({
       offerId: offerId,
@@ -4662,6 +4935,8 @@ function getOutputRowIndexes_(maxLevels) {
     benchmarkGroup: statsStart + 11,
     productTypeBenchmarkLabel: statsStart + 12,
     priorityLabel: statsStart + 13,
+    quarantineActive: statsStart + 16,
+    quarantineReasons: statsStart + 18,
     attrStageStart: attributionStart
   };
 }
@@ -5090,13 +5365,14 @@ function addDashboardPieChart_(sheet, posRow, posCol, title, dataRow, labelCol, 
 }
 
 
-function logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings) {
+function logUnifiedSummary_(merchantProducts, productTypeRows, funnelMap, quarantineState, outputRows, settings, productsStatus) {
   Logger.log("Unified summary");
   Logger.log("Merchant products: " + merchantProducts.length);
   Logger.log("ProductTypes rows: " + productTypeRows.length);
   Logger.log("Funnel stats products: " + Object.keys(funnelMap).length);
   Logger.log("Quarantine active products: " + Object.keys(quarantineState.activeById || {}).length);
-  Logger.log("Products rows written: " + outputRows.length);
+  Logger.log("Products write status: " + productsStatus);
+  Logger.log("Products rows written: " + (productsStatus === "WRITTEN" ? outputRows.length : 0));
   Logger.log("Product type filter enabled: " + settings.enableProductTypeFilter);
   Logger.log("Funnel Builder enabled: " + settings.enableFunnelBuilder);
   Logger.log("Quarantine enabled: " + settings.enableQuarantine);
@@ -5110,6 +5386,52 @@ function getOrCreateSheet_(ss, name) {
   var sheet = ss.getSheetByName(name);
   if (!sheet) sheet = ss.insertSheet(name);
   return sheet;
+}
+
+function prepareQuarantineSheets_(ss, settings) {
+  var definitions = [
+    { key: "active", setting: "quarantineRegistrySheetName", legacy: "QuarantineRegistry", name: "Quarantine Active Now",
+      header: ["id", "quarantine_count", "reason_no_sales", "reason_spend_over_margin", "reason_expensive_click", "problematic", "active_until", "no_sales_until", "spend_until", "expensive_click_until", "last_added", "reason_target_cpa", "target_cpa_until"] },
+    { key: "history", setting: "quarantineLogSheetName", legacy: "QuarantineLog", name: "Quarantine History",
+      header: ["id", "quarantine_count", "last_added", "problematic"] }
+  ];
+  // Спочатку перевірити обидва імені; за конфлікту не змінювати жодного листа.
+  definitions.forEach(function(def) {
+    var configured = safeTrim_(settings[def.setting]) || def.name;
+    var custom = configured !== def.name && configured !== def.legacy;
+    var target = ss.getSheetByName(custom ? configured : def.name);
+    var legacy = ss.getSheetByName(def.legacy);
+    if (target && legacy && target.getSheetId() !== legacy.getSheetId()) {
+      throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: існують " + target.getName() + " та " + def.legacy + ". Дані не об'єднано; потрібно визначити робочий лист.");
+    }
+    def.sheet = target || legacy;
+    def.targetName = custom ? configured : def.name;
+    def.rename = !!legacy && !target;
+    if (!def.sheet) {
+      var candidates = ss.getSheets().filter(function(sheet) {
+        if (!sheet.getLastRow() || sheet.getLastColumn() < def.header.length) return false;
+        var header = sheet.getRange(1, 1, 1, def.header.length).getValues()[0];
+        return def.header.every(function(value, i) { return safeTrim_(header[i]) === value; });
+      });
+      if (candidates.length > 1) throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: кілька листів зі структурою " + def.name + ". Потрібно визначити робочий лист.");
+      if (candidates.length === 1) {
+        def.sheet = candidates[0];
+        Logger.log("Збережено користувацьке ім'я карантинного листа: " + def.sheet.getName());
+      }
+    }
+  });
+  if (definitions[0].sheet && definitions[1].sheet && definitions[0].sheet.getSheetId() === definitions[1].sheet.getSheetId()) {
+    throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: поточний карантин та історія не можуть використовувати один лист.");
+  }
+  if (definitions[0].targetName === definitions[1].targetName) throw new Error("QUARANTINE_SHEET_NAME_CONFLICT: імена поточного карантину та історії мають відрізнятися.");
+  var result = {};
+  definitions.forEach(function(def) {
+    if (def.rename) def.sheet.setName(def.targetName);
+    if (!def.sheet) def.sheet = ss.insertSheet(def.targetName);
+    settings[def.setting] = def.sheet.getName();
+    result[def.key] = def.sheet;
+  });
+  return result;
 }
 
 
@@ -5193,27 +5515,164 @@ function hideDefaultBlankSheets_(ss, managedSheets) {
 
 
 function protectManagedSheets_(ss, settings) {
-  var openSheetNames = {};
-  openSheetNames[settings.productTypesSheetName] = true;
-  openSheetNames[settings.dashboardSheetName] = true;
-  openSheetNames[settings.dashboardDataSheetName] = true;
-  openSheetNames[settings.prioritySheetName] = true;
-  openSheetNames[settings.seasonalitySheetName] = true;
-  openSheetNames[settings.settingsSheetName || SETTINGS_SHEET_NAME] = true;
-  var ownerEmail = getProtectionOwnerEmail_();
+  if (!settings.enableSheetProtection) return;
+  var previous = readManualProtectionState_(ss);
+  var next = [];
   var sheets = ss.getSheets();
   for (var i = 0; i < sheets.length; i++) {
     var sheet = sheets[i];
-    if (openSheetNames[sheet.getName()]) {
-      removeUnifiedSheetProtections_(sheet);
-      continue;
+    var current = [];
+    ["SHEET", "RANGE"].forEach(function(type) {
+      sheet.getProtections(SpreadsheetApp.ProtectionType[type]).forEach(function(protection) {
+        if (!protection.canEdit()) throw new Error("Немає прав запам'ятати захист: " + sheet.getName());
+        current.push(readManualProtection_(sheet, protection, type));
+      });
+    });
+    var used = {};
+    previous.filter(function(item) { return item.sheetId === sheet.getSheetId(); }).forEach(function(item) {
+      // Match the description first (a manually moved range keeps its identity),
+      // then the location (a manually renamed protection replaces its old settings).
+      var match = -1;
+      for (var j = 0; j < current.length; j++) {
+        if (!used[j] && current[j].type === item.type && item.description && current[j].description === item.description) { match = j; break; }
+      }
+      if (match < 0) for (var k = 0; k < current.length; k++) {
+        if (!used[k] && current[k].type === item.type && current[k].range === item.range) { match = k; break; }
+      }
+      if (match >= 0) used[match] = true;
+      else {
+        restoreManualProtection_(sheet, item);
+        next.push(item);
+        Logger.log("Відновлено ручний захист: " + sheet.getName() + (item.range ? "!" + item.range : ""));
+      }
+    });
+    next = next.concat(current);
+  }
+  // Deleted sheets are not recreated. Only protections on existing sheets are remembered.
+  writeManualProtectionState_(ss, next);
+}
+
+function manualProtectionPrefix_(ss) { return "UMPC_MANUAL_PROTECTION_V1:" + ss.getId(); }
+
+function readManualProtectionState_(ss) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var pointer = props.getProperty(prefix);
+  if (!pointer) return [];
+  var manifest = JSON.parse(pointer);
+  var text = "";
+  for (var i = 0; i < manifest.count; i++) {
+    var part = props.getProperty(prefix + ":" + manifest.generation + ":" + i);
+    if (part === null) throw new Error("Неповний збережений набір ручних захистів.");
+    text += part;
+  }
+  return JSON.parse(text);
+}
+
+function writeManualProtectionState_(ss, items) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var previous = props.getProperty(prefix);
+  var generation = Utilities.getUuid();
+  var text = JSON.stringify(items);
+  var parts = {};
+  var count = Math.ceil(text.length / 2000);
+  for (var i = 0; i < count; i++) parts[prefix + ":" + generation + ":" + i] = text.slice(i * 2000, (i + 1) * 2000);
+  // Publish the pointer only after every chunk is saved; failed writes keep the old snapshot.
+  props.setProperties(parts);
+  props.setProperty(prefix, JSON.stringify({ generation: generation, count: count }));
+  if (previous) {
+    var old = JSON.parse(previous);
+    for (var j = 0; j < old.count; j++) props.deleteProperty(prefix + ":" + old.generation + ":" + j);
+  }
+}
+
+function forgetManualProtectionState_(ss) {
+  var props = PropertiesService.getScriptProperties();
+  var prefix = manualProtectionPrefix_(ss);
+  var previous = props.getProperty(prefix);
+  props.deleteProperty(prefix);
+  if (previous) {
+    var old = JSON.parse(previous);
+    for (var i = 0; i < old.count; i++) props.deleteProperty(prefix + ":" + old.generation + ":" + i);
+  }
+}
+
+function prepareManualProtectionMode_(ss, settings) {
+  var props = PropertiesService.getScriptProperties();
+  var key = manualProtectionPrefix_(ss) + ":migrated";
+  if (!props.getProperty(key)) {
+    var legacy = false;
+    ss.getSheets().forEach(function(sheet) {
+      [SpreadsheetApp.ProtectionType.SHEET, SpreadsheetApp.ProtectionType.RANGE].forEach(function(type) {
+        sheet.getProtections(type).forEach(function(protection) {
+          if (["Unified Product Control: службовий лист", "Seasonality category formulas", "Seasonality final formulas"].indexOf(protection.getDescription()) < 0) return;
+          if (!protection.canEdit()) throw new Error("Немає прав зняти старий автоматичний захист: " + sheet.getName());
+          legacy = true;
+          protection.remove();
+        });
+      });
+    });
+    var settingsSheet = ss.getSheetByName(settings.settingsSheetName || SETTINGS_SHEET_NAME);
+    var rows = settingsSheet.getDataRange().getValues();
+    rows.forEach(function(row, index) {
+      if (safeTrim_(row[0]) !== "enable_sheet_protection") return;
+      var oldMode = String(row[2] || "").indexOf("false = не оновлювати захист службових листів") === 0;
+      if (legacy || oldMode) {
+        settings.enableSheetProtection = false;
+        settingsSheet.getRange(index + 1, 2).setValue(false);
+      }
+      settingsSheet.getRange(index + 1, 3).setValue("Типово false: автоматичних замків немає. true = запам'ятовувати ручні захисти та відновлювати видалені після запуску. false = забути збережений набір, не видаляючи ручних захистів. Для остаточного видалення: вимкніть опцію, виконайте запуск, видаліть замок вручну.");
+    });
+    props.setProperty(key, "true");
+    Logger.log("Режим ручних захистів підготовлено; старі автоматичні замки знято.");
+  }
+  if (!settings.enableSheetProtection) forgetManualProtectionState_(ss);
+  else protectManagedSheets_(ss, settings);
+}
+
+function readManualProtection_(sheet, protection, type) {
+  var warning = protection.isWarningOnly();
+  return {
+    sheetId: sheet.getSheetId(), type: type,
+    range: type === "RANGE" ? protection.getRange().getA1Notation() : "",
+    rangeName: type === "RANGE" ? protection.getRangeName() || "" : "",
+    description: protection.getDescription() || "", warning: warning,
+    editors: warning ? [] : protection.getEditors().map(function(user) { return user.getEmail(); }),
+    domain: warning ? false : protection.canDomainEdit(),
+    audiences: warning ? [] : protection.getTargetAudiences().map(function(audience) { return audience.getAudienceId(); }),
+    unprotected: type === "SHEET" ? protection.getUnprotectedRanges().map(function(range) { return range.getA1Notation(); }) : []
+  };
+}
+
+function restoreManualProtection_(sheet, item) {
+  var protection = item.type === "SHEET" ? sheet.protect() : sheet.getRange(item.range).protect();
+  try {
+    protection.setDescription(item.description);
+    if (item.rangeName) protection.setRangeName(item.rangeName);
+    if (item.type === "SHEET") protection.setUnprotectedRanges(item.unprotected.map(function(a1) { return sheet.getRange(a1); }));
+    protection.setWarningOnly(item.warning);
+    if (!item.warning) {
+      var me = getProtectionOwnerEmail_();
+      if (me) protection.addEditor(me);
+      var remove = protection.getEditors().filter(function(user) { return user.getEmail() !== me && item.editors.indexOf(user.getEmail()) < 0; });
+      if (remove.length) protection.removeEditors(remove);
+      if (item.editors.length) protection.addEditors(item.editors);
+      if (protection.canDomainEdit() !== item.domain) protection.setDomainEdit(item.domain);
+      protection.getTargetAudiences().forEach(function(audience) {
+        if (item.audiences.indexOf(audience.getAudienceId()) < 0) protection.removeTargetAudience(audience.getAudienceId());
+      });
+      item.audiences.forEach(function(id) { protection.addTargetAudience(id); });
     }
-    ensureUnifiedSheetProtection_(sheet, ownerEmail);
+  } catch (err) {
+    // A partial protection is not a successful restore and must not replace the saved settings.
+    if (protection.canEdit()) protection.remove();
+    throw err;
   }
 }
 
 
-function ensureUnifiedSheetProtection_(sheet, ownerEmail) {
+function ensureUnifiedSheetProtection_(sheet, ownerEmail, editableRange) {
   var description = "Unified Product Control: службовий лист";
   var protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
   var protection = null;
@@ -5222,8 +5681,9 @@ function ensureUnifiedSheetProtection_(sheet, ownerEmail) {
       protection = protections[i];
     }
   }
-  if (!protection) protection = sheet.protect().setDescription(description);
   try {
+    if (!protection) protection = sheet.protect().setDescription(description);
+    if (!protection.canEdit()) { Logger.log("Немає прав на керування захистом: " + sheet.getName()); return; }
     protection.setWarningOnly(false);
     if (ownerEmail) protection.addEditor(ownerEmail);
     var editors = protection.getEditors();
@@ -5233,6 +5693,12 @@ function ensureUnifiedSheetProtection_(sheet, ownerEmail) {
     }
     if (remove.length) protection.removeEditors(remove);
     if (protection.canDomainEdit()) protection.setDomainEdit(false);
+    if (editableRange) {
+      var ranges = protection.getUnprotectedRanges();
+      if (!ranges.some(function(range) { return range.getA1Notation() === editableRange.getA1Notation(); })) {
+        protection.setUnprotectedRanges(ranges.concat([editableRange]));
+      }
+    }
   } catch (err) {
     Logger.log("Не вдалося оновити захист листа '" + sheet.getName() + "': " + ((err && err.message) ? err.message : String(err)));
   }
@@ -5243,7 +5709,7 @@ function removeUnifiedSheetProtections_(sheet) {
   var description = "Unified Product Control: службовий лист";
   var protections = sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET);
   for (var i = 0; i < protections.length; i++) {
-    if (protections[i].getDescription() === description) protections[i].remove();
+    if (protections[i].getDescription() === description && protections[i].canEdit()) protections[i].remove();
   }
 }
 
@@ -6248,4 +6714,43 @@ function referenceAddDashboardPieChart_(sheet, posRow, posCol, title, dataRow, l
     .setPosition(posRow, posCol, offsetX || 0, offsetY || 0)
     .build();
   sheet.insertChart(chart);
+}
+
+
+function readColumnVisibility_(sheet) {
+  var state = {};
+  if (!sheet.getLastRow() || !sheet.getLastColumn()) return state;
+  var header = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  header.forEach(function(name, i) { if (name) state[name] = sheet.isColumnHiddenByUser(i + 1); });
+  return state;
+}
+
+function restoreColumnVisibility_(sheet, header, state) {
+  header.forEach(function(name, i) {
+    if (!Object.prototype.hasOwnProperty.call(state, name)) return;
+    if (state[name]) sheet.hideColumns(i + 1);
+    else if (sheet.isColumnHiddenByUser(i + 1)) sheet.showColumns(i + 1);
+  });
+}
+
+function writeCategoryLinks_(sheet, rows, maxLevels) {
+  var missing = 0;
+  rows.forEach(function(row, i) {
+    var depth = getPathDepth_(row.path, maxLevels);
+    if (!depth) return;
+    var url = safeTrim_(row.categoryUrl);
+    if (!/^https?:\/\/[^\s/]+(?:[/?#][^\s]*)?$/i.test(url)) { missing++; return; }
+    var text = safeTrim_(row.path[depth - 1]);
+    sheet.getRange(i + 2, depth + 1).setRichTextValue(SpreadsheetApp.newRichTextValue().setText(text).setLinkUrl(url).build());
+  });
+  if (missing) Logger.log("CATEGORY_URL_MISSING: категорій без підтвердженого category_url: " + missing);
+}
+
+function getExistingCategoryUrl_(row, richValues, maxLevels) {
+  for (var i = maxLevels; i >= 1; i--) {
+    if (!safeTrim_(row[i])) continue;
+    var value = richValues && richValues[i - 1];
+    return value ? value.getLinkUrl() || "" : "";
+  }
+  return "";
 }
